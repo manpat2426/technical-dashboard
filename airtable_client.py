@@ -1,0 +1,215 @@
+"""
+All Airtable reads and writes for the pipeline, talking directly to the
+Airtable REST API (not the Airtable SDK, to keep dependencies minimal).
+
+Field names used below were confirmed against the live base schema
+(base appummriRwPGUNjsj) immediately before writing this file -- see
+Config / Symbols / Indicators / Scores_Current / Scores_History field
+lists. If Airtable columns are ever renamed, this file (and only this
+file) needs updating.
+
+Write strategy per table:
+  - Config, Symbols: read-only from this script's perspective.
+  - Indicators, Scores_Current: one row per symbol, replaced in place
+    each run (upsert keyed by Symbol).
+  - Scores_History: one row per symbol PER DATE, upserted keyed by
+    (Symbol, Date) so re-running or re-backfilling never creates
+    duplicate snapshot rows.
+"""
+
+import requests
+
+from config import (
+    AIRTABLE_TOKEN,
+    AIRTABLE_BASE_ID,
+    TABLE_CONFIG,
+    TABLE_SYMBOLS,
+    TABLE_INDICATORS,
+    TABLE_SCORES_CURRENT,
+    TABLE_SCORES_HISTORY,
+)
+
+AIRTABLE_API_URL = "https://api.airtable.com/v0/{base_id}/{table_id}"
+_HEADERS = {"Authorization": f"Bearer {AIRTABLE_TOKEN}", "Content-Type": "application/json"}
+
+# Reuse one connection to api.airtable.com across all calls instead of
+# paying a fresh TCP/TLS handshake (~1s+) per request -- see the same
+# fix in eodhd_client.py for the measurements that motivated this.
+_session = requests.Session()
+
+# Airtable's create/update endpoints accept at most 10 records per request.
+BATCH_SIZE = 10
+
+
+# --- Low-level helpers ---
+
+def _list_all_records(table_id: str, params: dict = None) -> list:
+    """Fetch every record matching `params`, following Airtable's cursor
+    pagination until exhausted."""
+    url = AIRTABLE_API_URL.format(base_id=AIRTABLE_BASE_ID, table_id=table_id)
+    records = []
+    query = dict(params or {})
+    while True:
+        response = _session.get(url, headers=_HEADERS, params=query, timeout=30)
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Airtable list failed ({response.status_code}) for {table_id}: {response.text[:300]}"
+            )
+        data = response.json()
+        records.extend(data.get("records", []))
+        offset = data.get("offset")
+        if not offset:
+            break
+        query["offset"] = offset
+    return records
+
+
+def _batch_create(table_id: str, field_rows: list) -> None:
+    """Create records, chunked to Airtable's 10-per-request limit.
+    typecast=False on purpose: every singleSelect option this pipeline
+    writes (regimes, SnapshotType) already exists in the base, so a
+    rejected write here means a real mismatch worth seeing, not something
+    to silently paper over by auto-creating a new option."""
+    url = AIRTABLE_API_URL.format(base_id=AIRTABLE_BASE_ID, table_id=table_id)
+    for i in range(0, len(field_rows), BATCH_SIZE):
+        chunk = field_rows[i:i + BATCH_SIZE]
+        payload = {"records": [{"fields": fields} for fields in chunk], "typecast": False}
+        response = _session.post(url, headers=_HEADERS, json=payload, timeout=30)
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Airtable create failed ({response.status_code}) for {table_id}: {response.text[:300]}"
+            )
+
+
+def _batch_update(table_id: str, id_field_pairs: list) -> None:
+    """Update existing records by record id, chunked to 10 per request."""
+    url = AIRTABLE_API_URL.format(base_id=AIRTABLE_BASE_ID, table_id=table_id)
+    for i in range(0, len(id_field_pairs), BATCH_SIZE):
+        chunk = id_field_pairs[i:i + BATCH_SIZE]
+        payload = {
+            "records": [{"id": record_id, "fields": fields} for record_id, fields in chunk],
+            "typecast": False,
+        }
+        response = _session.patch(url, headers=_HEADERS, json=payload, timeout=30)
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Airtable update failed ({response.status_code}) for {table_id}: {response.text[:300]}"
+            )
+
+
+def _upsert_by_key(table_id: str, rows: list, existing_by_key: dict, key_fn) -> None:
+    """Shared upsert logic: split `rows` into creates vs. updates based on
+    whether key_fn(row) is already present in existing_by_key (key ->
+    record id), then write both batches."""
+    to_create, to_update = [], []
+    for row in rows:
+        record_id = existing_by_key.get(key_fn(row))
+        if record_id:
+            to_update.append((record_id, row))
+        else:
+            to_create.append(row)
+
+    if to_create:
+        _batch_create(table_id, to_create)
+    if to_update:
+        _batch_update(table_id, to_update)
+
+
+# --- Config table (read-only) ---
+
+def get_config() -> dict:
+    """Reads the Config table into {Parameter: Value}. Blank placeholder
+    rows (no Parameter set) are skipped."""
+    records = _list_all_records(TABLE_CONFIG)
+    config = {}
+    for record in records:
+        fields = record["fields"]
+        parameter = fields.get("Parameter")
+        value = fields.get("Value")
+        if parameter and value is not None:
+            config[parameter] = value
+    return config
+
+
+# --- Symbols table (read-only) ---
+
+def get_active_symbols() -> list:
+    """Reads Active=true rows from Symbols. Group/Subgroup come back as
+    plain strings from the REST API (singleSelect fields serialize to
+    their option name, not an object)."""
+    records = _list_all_records(TABLE_SYMBOLS)
+    symbols = []
+    for record in records:
+        fields = record["fields"]
+        if not fields.get("Active"):
+            continue
+        symbols.append({
+            "Symbol": fields.get("Symbol"),
+            "Name": fields.get("Name"),
+            "Group": fields.get("Group"),
+            "Subgroup": fields.get("Subgroup"),
+        })
+    return symbols
+
+
+# --- Indicators (latest row per symbol, replaced each run) ---
+
+def upsert_indicators(rows: list) -> None:
+    """rows: list of dicts with Airtable field names as keys (Symbol,
+    Date, Close, MA60, MA120, ATR20, ATR90Avg, BBUpper, BBLower, BBMid,
+    MACD, MACD_Signal, RSI14, ROC20). Replaces each symbol's existing row
+    in place; Indicators holds only the latest pull per symbol, not a
+    growing history (Scores_History is where dated history lives)."""
+    existing = _list_all_records(TABLE_INDICATORS, {"fields[]": ["Symbol"]})
+    existing_by_symbol = {
+        r["fields"]["Symbol"]: r["id"] for r in existing if r["fields"].get("Symbol")
+    }
+    _upsert_by_key(TABLE_INDICATORS, rows, existing_by_symbol, key_fn=lambda row: row["Symbol"])
+
+
+# --- Scores_Current (latest row per symbol, replaced each run) ---
+
+def upsert_scores_current(rows: list) -> None:
+    """rows: list of dicts with Airtable field names as keys, one per
+    symbol. Replaces each symbol's existing row in place."""
+    existing = _list_all_records(TABLE_SCORES_CURRENT, {"fields[]": ["Symbol"]})
+    existing_by_symbol = {
+        r["fields"]["Symbol"]: r["id"] for r in existing if r["fields"].get("Symbol")
+    }
+    _upsert_by_key(TABLE_SCORES_CURRENT, rows, existing_by_symbol, key_fn=lambda row: row["Symbol"])
+
+
+# --- Scores_History (dated snapshots, upserted by Symbol+Date) ---
+
+def upsert_scores_history(rows: list, symbols: list) -> None:
+    """rows: list of dicts with Airtable field names as keys, including
+    Symbol and Date ("YYYY-MM-DD"). `symbols` scopes the existing-records
+    lookup to just the symbols being written this run, so we don't have
+    to fetch Airtable's entire (potentially large, ever-growing) history
+    table on every run."""
+    existing_by_key = _existing_history_keys(symbols)
+    _upsert_by_key(
+        TABLE_SCORES_HISTORY,
+        rows,
+        existing_by_key,
+        key_fn=lambda row: (row["Symbol"], row["Date"]),
+    )
+
+
+def _existing_history_keys(symbols: list) -> dict:
+    """(Symbol, Date) -> record id, for just the given symbols."""
+    if not symbols:
+        return {}
+    formula = "OR(" + ",".join(f"{{Symbol}}='{s}'" for s in symbols) + ")"
+    records = _list_all_records(TABLE_SCORES_HISTORY, {
+        "filterByFormula": formula,
+        "fields[]": ["Symbol", "Date"],
+    })
+    keys = {}
+    for record in records:
+        fields = record["fields"]
+        symbol = fields.get("Symbol")
+        record_date = fields.get("Date")
+        if symbol and record_date:
+            keys[(symbol, record_date)] = record["id"]
+    return keys

@@ -1,0 +1,30 @@
+name: Daily Technical Dashboard Run
+
+on:
+  schedule:
+    # 02:00 UTC = 9:00 PM EST / 10:00 PM EDT. US markets close 4:00 PM ET
+    # and EODHD updates EOD data a few hours after that -- this comfortably
+    # clears both, in either daylight-saving state, year-round.
+    - cron: "0 2 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pipeline (all active symbols, real Airtable writes)
+        env:
+          EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+        run: python main.py --write
