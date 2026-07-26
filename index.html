@@ -169,6 +169,8 @@
     font-weight: 600;
     text-align: center;
     padding: 0;
+    will-change: transform;
+    -webkit-transform: translateZ(0);
   }
   thead tr.group-row th {
     top: 0;
@@ -217,6 +219,13 @@
     z-index: 2;
     background: var(--surface);
     text-align: left;
+    /* Forces its own GPU compositing layer. Without this, WebKit/iOS
+       Safari can lag a frame or two repainting sticky elements during
+       momentum scrolling inside a nested overflow:auto container (as
+       opposed to the whole page scrolling), which reads as the column
+       "floating" loose from the rest of the row before it catches up. */
+    will-change: transform;
+    -webkit-transform: translateZ(0);
   }
   thead th.col-symbol, thead th.col-name { z-index: 4; background: var(--surface-raised); }
   th.col-symbol, td.col-symbol { left: 0; width: 72px; min-width: 72px; max-width: 72px; }
