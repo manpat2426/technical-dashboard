@@ -18,7 +18,10 @@ verified in Airtable.
 """
 
 import argparse
+import json
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
 import pandas as pd
 
@@ -26,6 +29,26 @@ import airtable_client
 import indicators
 import scoring
 from config import TEST_MODE, TEST_SYMBOLS, BACKFILL_MONTHS
+
+# Written alongside repo root regardless of the working directory the
+# script is invoked from -- read by the (future) GitHub Pages dashboard
+# instead of it connecting to Airtable directly, so no Airtable token is
+# ever exposed client-side.
+DASHBOARD_JSON_PATH = Path(__file__).parent / "dashboard_data.json"
+
+# Exactly the fields the dashboard needs from each Scores_Current row.
+# Keeping this as an explicit list (rather than dumping the whole row)
+# means internal/traceability-only columns (Price60, ATR_Ratio, BBW,
+# etc.) never leak into the public JSON file.
+DASHBOARD_JSON_FIELDS = [
+    "Symbol", "Name", "Group", "Subgroup",
+    "TechScore", "TechScore_1W", "TechScore_2W", "TechScore_3W",
+    "TechScore_1M", "TechScore_2M", "TechScore_3M",
+    "TrendRegime", "MomentumRegime", "VolatilityRegime",
+    "TrendRegime_1W", "TrendRegime_2W", "TrendRegime_3W", "TrendRegime_1M",
+    "MomentumRegime_1W", "MomentumRegime_2W", "MomentumRegime_3W", "MomentumRegime_1M",
+    "VolatilityRegime_1W", "VolatilityRegime_2W", "VolatilityRegime_3W", "VolatilityRegime_1M",
+]
 
 
 def _to_native(fields: dict) -> dict:
@@ -63,11 +86,89 @@ def build_indicators_row(latest: pd.Series) -> dict:
     })
 
 
-def build_scores_current_row(latest: pd.Series, group: str) -> dict:
-    """One symbol's latest computed scores, for Scores_Current."""
-    return _to_native({
+# Checkpoint horizons for build_checkpoint_fields(). Week-based horizons
+# get all 4 checkpoint columns (TechScore + all 3 regimes); month-based
+# horizons only get TechScore, except 1M which also gets all 3 regimes
+# -- matching the 6 TechScore / 12 regime column split requested.
+_CHECKPOINT_WEEK_OFFSETS = [("1W", pd.Timedelta(days=7)),
+                            ("2W", pd.Timedelta(days=14)),
+                            ("3W", pd.Timedelta(days=21))]
+_CHECKPOINT_MONTH_OFFSETS = [("1M", 1), ("2M", 2), ("3M", 3)]
+
+
+def _nearest_snapshot_on_or_before(scored: pd.DataFrame, dates_dt: pd.Series, target) -> pd.Series | None:
+    """The row in `scored` with the latest Date <= target, or None if
+    every date in `scored` is after target (target predates this
+    symbol's earliest scoreable history)."""
+    candidates = scored[dates_dt <= target]
+    if candidates.empty:
+        return None
+    return candidates.iloc[-1]
+
+
+def build_checkpoint_fields(scored: pd.DataFrame, anchor_date: str) -> dict:
+    """
+    Historical checkpoint columns for Scores_Current: TechScore at
+    1W/2W/3W/1M/2M/3M before `anchor_date`, plus TrendRegime/
+    MomentumRegime/VolatilityRegime at 1W/2W/3W/1M before it. 1M/2M/3M
+    use calendar-month subtraction (like Excel/Airtable's EDATE), so a
+    31st can resolve to a shorter month's last day.
+
+    Sourced from the same in-memory `scored` DataFrame that
+    build_scores_history_rows() uses -- NOT a live Airtable query. That
+    DataFrame already holds every scoreable date across the ~2-year pull
+    (comfortably more than the 3-month max lookback here) with the exact
+    same values Scores_History gets written from, so results are
+    identical to what a live Scores_History read would return, without
+    ~113 extra Airtable round-trips per run -- the same call made for
+    the momentum lookback in scoring.py.
+
+    Retrieval is "nearest available snapshot on or before the target
+    date" (see _nearest_snapshot_on_or_before). If a target predates a
+    symbol's earliest scoreable date, that checkpoint's keys are simply
+    omitted from the returned dict -- Airtable leaves omitted fields
+    blank/untouched on update, so this reads as "no data yet" rather
+    than a wrong or erroring value.
+    """
+    anchor = pd.to_datetime(anchor_date)
+    dates_dt = pd.to_datetime(scored["Date"])
+    fields = {}
+
+    for suffix, delta in _CHECKPOINT_WEEK_OFFSETS:
+        row = _nearest_snapshot_on_or_before(scored, dates_dt, anchor - delta)
+        if row is not None:
+            fields[f"TechScore_{suffix}"] = row["TechScore"]
+            fields[f"TrendRegime_{suffix}"] = row["TrendRegime"]
+            fields[f"MomentumRegime_{suffix}"] = row["MomentumRegime"]
+            fields[f"VolatilityRegime_{suffix}"] = row["VolatilityRegime"]
+
+    for suffix, months in _CHECKPOINT_MONTH_OFFSETS:
+        row = _nearest_snapshot_on_or_before(scored, dates_dt, anchor - pd.DateOffset(months=months))
+        if row is not None:
+            fields[f"TechScore_{suffix}"] = row["TechScore"]
+            if suffix == "1M":
+                fields["TrendRegime_1M"] = row["TrendRegime"]
+                fields["MomentumRegime_1M"] = row["MomentumRegime"]
+                fields["VolatilityRegime_1M"] = row["VolatilityRegime"]
+
+    return fields
+
+
+def build_scores_current_row(scored: pd.DataFrame, latest: pd.Series, name: str, group: str, subgroup: str) -> dict:
+    """One symbol's latest computed scores plus historical checkpoint
+    columns, for Scores_Current. Name/Group/Subgroup are all inherited
+    directly from the Symbols table. Group/Subgroup are single-select
+    fields here (inherited from the Symbols table's own Group/Subgroup
+    select fields) -- unlike the old plain-text Group field, an empty/
+    invalid value would be rejected by Airtable (typecast is off), so
+    callers must pass None rather than "" when a symbol has no Group/
+    Subgroup, letting _to_native leave the field blank instead of
+    erroring."""
+    fields = {
         "Symbol": latest["Symbol"],
+        "Name": name,
         "Group": group,
+        "Subgroup": subgroup,
         "Date": latest["Date"],
         "Price60": latest["Price60"],
         "Price120": latest["Price120"],
@@ -89,7 +190,9 @@ def build_scores_current_row(latest: pd.Series, group: str) -> dict:
         "VolatilityRegime": latest["VolatilityRegime"],
         "VolAdj": latest["VolAdj"],
         "TechScore": latest["TechScore"],
-    })
+    }
+    fields.update(build_checkpoint_fields(scored, latest["Date"]))
+    return _to_native(fields)
 
 
 def build_scores_history_rows(window: pd.DataFrame, group: str, snapshot_type: str) -> list:
@@ -111,6 +214,35 @@ def build_scores_history_rows(window: pd.DataFrame, group: str, snapshot_type: s
             "SnapshotType": snapshot_type,
         }))
     return rows
+
+
+def build_dashboard_json(scores_current_rows: list) -> dict:
+    """
+    The public dashboard payload: {"last_updated": <UTC ISO timestamp>,
+    "symbols": [one record per successfully-processed active symbol]}.
+
+    Each record has exactly DASHBOARD_JSON_FIELDS, always in the same
+    shape -- a checkpoint that was left blank in Scores_Current (e.g. a
+    symbol too new to have 3M of history) comes through as JSON `null`
+    via dict.get() rather than the key being missing, so the dashboard
+    can rely on every record having the same fields.
+
+    scores_current_rows already has Airtable-safe native types (from
+    _to_native() in build_scores_current_row), so this is just a
+    reshape -- no further conversion needed for JSON serialization.
+    """
+    return {
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+        "symbols": [
+            {field: row.get(field) for field in DASHBOARD_JSON_FIELDS}
+            for row in scores_current_rows
+        ],
+    }
+
+
+def write_dashboard_json(data: dict, path: Path) -> None:
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
 
 
 def backfill_window(scored: pd.DataFrame, months: int) -> pd.DataFrame:
@@ -141,7 +273,14 @@ def run(symbols_to_process: list, write: bool):
             print(f"\n{symbol}: not found (or not Active) in the Symbols table -- skipping.")
             skipped.append(symbol)
             continue
+        # Scores_History.Group is still a plain-text field, so "" is a
+        # safe default there. Scores_Current.Group/Subgroup are
+        # single-select fields now -- pass None (not "") when missing,
+        # per build_scores_current_row's docstring.
         group = symbol_info.get("Group") or ""
+        group_select = symbol_info.get("Group")
+        subgroup_select = symbol_info.get("Subgroup")
+        name = symbol_info.get("Name")
 
         print(f"\n{symbol}: pulling from EODHD and scoring...")
         try:
@@ -161,7 +300,7 @@ def run(symbols_to_process: list, write: bool):
 
         latest = scored.iloc[-1]
         indicators_rows.append(build_indicators_row(latest))
-        scores_current_rows.append(build_scores_current_row(latest, group))
+        scores_current_rows.append(build_scores_current_row(scored, latest, name, group_select, subgroup_select))
 
         window = backfill_window(scored, BACKFILL_MONTHS)
         scores_history_rows.extend(build_scores_history_rows(window, group, "Backfill"))
@@ -199,6 +338,14 @@ def run(symbols_to_process: list, write: bool):
         print(f"  Scores_Current: wrote {len(scores_current_rows)} row(s).")
         airtable_client.upsert_scores_history(scores_history_rows, symbols_to_process)
         print(f"  Scores_History: wrote {len(scores_history_rows)} row(s).")
+
+        # Written only on a real --write run, not a dry run: this file
+        # should always reflect the same "final" state that was just
+        # pushed to Airtable, never data that was only computed locally.
+        dashboard_data = build_dashboard_json(scores_current_rows)
+        write_dashboard_json(dashboard_data, DASHBOARD_JSON_PATH)
+        print(f"  {DASHBOARD_JSON_PATH.name}: wrote {len(dashboard_data['symbols'])} symbol(s), "
+              f"last_updated={dashboard_data['last_updated']}.")
         print("\nDone.")
 
     if errored:

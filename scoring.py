@@ -70,6 +70,23 @@ def compute_derived_series(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     # >1 means recent volatility is running hotter than normal.
     df["ATR_Ratio"] = df["ATR20"] / df["ATR90Avg"]
 
+    # Prior-period momentum inputs (~5 trading days back), for the
+    # Improving/Deteriorating regimes in _momentum_regime(). This is a
+    # fixed positional shift within df, which is already one row per
+    # actual trading day in ascending order (see
+    # indicators.build_symbol_history) -- so shifting by 5 rows IS "the
+    # nearest available snapshot on or before 5 trading days ago," the
+    # same nearest-prior-date semantics used elsewhere, just without
+    # needing a date-matching search since there are no gaps to match
+    # around. Dates too early in a symbol's history to have 5 prior rows
+    # come out as NaN; score_row() treats that as "no prior data available"
+    # and skips Improving/Deteriorating for that date rather than erroring.
+    momentum_lookback = 5
+    df["MACD_prior"] = df["MACD"].shift(momentum_lookback)
+    df["MACD_Signal_prior"] = df["MACD_Signal"].shift(momentum_lookback)
+    df["RSI14_prior"] = df["RSI14"].shift(momentum_lookback)
+    df["ROC20_prior"] = df["ROC20"].shift(momentum_lookback)
+
     return df
 
 
@@ -130,11 +147,7 @@ def _trend_regime(price60: float, price120: float, ma_align: int, config: dict) 
 # Momentum
 # ============================================================
 
-# MomentumAdj mapping, per the brief. Improving/Deteriorating are listed
-# here for completeness even though _momentum_regime() below can't
-# produce them yet (they need a prior-period comparison the brief defers
-# to a later iteration) -- anything not matching a rule falls through to
-# Neutral instead.
+# MomentumAdj mapping, per the brief.
 MOMENTUM_ADJ_BY_REGIME = {
     "Accelerating Bullish": 3,
     "Bullish": 2,
@@ -146,18 +159,72 @@ MOMENTUM_ADJ_BY_REGIME = {
 }
 
 
-def _momentum_regime(macd: float, macd_signal: float, rsi: float, roc: float) -> str:
+def _momentum_improving(macd_hist_today: float, rsi_today: float, roc_today: float,
+                         prior: dict) -> bool:
+    """True only if ALL 3 of these hold vs. `prior` (~5 trading days
+    ago) -- a broad-based turn where MACD, RSI, and ROC all agree, not
+    just any 2 of 3 (tightened after test-mode showed 2-of-3 firing on
+    ~30-39% of dates, much of it noise-flipping in choppy stretches):
+      (a) (MACD - MACD_Signal) today > (MACD - MACD_Signal) prior
+      (b) RSI14 today >= RSI14 prior + 3
+      (c) ROC20 today > ROC20 prior AND (ROC20 today >= 0
+          OR ROC20 today >= ROC20 prior + 0.02)
+    Note ROC20 is stored as a fraction (0.05 = 5%), so the "+0.02" here
+    is a 2-percentage-point move, not "+2" -- an earlier version of this
+    threshold used +2, which is unreachable at this scale and effectively
+    disabled that half of condition (c)."""
+    prior_macd_hist = prior["MACD"] - prior["MACD_Signal"]
+
+    macd_hist_up = macd_hist_today > prior_macd_hist
+    rsi_up = rsi_today >= prior["RSI14"] + 3
+    roc_up = roc_today > prior["ROC20"] and (roc_today >= 0 or roc_today >= prior["ROC20"] + 0.02)
+
+    return macd_hist_up and rsi_up and roc_up
+
+
+def _momentum_deteriorating(macd_hist_today: float, rsi_today: float, roc_today: float,
+                             prior: dict) -> bool:
+    """True only if ALL 3 of these hold vs. `prior` (~5 trading days
+    ago) -- the mirror image of _momentum_improving, tightened the same
+    way:
+      (a) (MACD - MACD_Signal) today < (MACD - MACD_Signal) prior
+      (b) RSI14 today <= RSI14 prior - 3
+      (c) ROC20 today < ROC20 prior AND (ROC20 today <= 0
+          OR ROC20 today <= ROC20 prior - 0.02)"""
+    prior_macd_hist = prior["MACD"] - prior["MACD_Signal"]
+
+    macd_hist_down = macd_hist_today < prior_macd_hist
+    rsi_down = rsi_today <= prior["RSI14"] - 3
+    roc_down = roc_today < prior["ROC20"] and (roc_today <= 0 or roc_today <= prior["ROC20"] - 0.02)
+
+    return macd_hist_down and rsi_down and roc_down
+
+
+def _momentum_regime(macd: float, macd_signal: float, rsi: float, roc: float,
+                      prior: dict | None) -> str:
     """Plain-language momentum state. Top-down, first match wins -- order
-    matches the brief: Accelerating Bullish, Accelerating Bearish,
-    Bullish, Bearish, else Neutral."""
+    matches the brief: Accelerating Bullish, Bullish, Improving,
+    Accelerating Bearish, Bearish, Deteriorating, else Neutral.
+
+    `prior` holds MACD/MACD_Signal/RSI14/ROC20 from ~5 trading days ago
+    (see compute_derived_series), or None if this date is too early in
+    the symbol's history to have that lookback -- in which case
+    Improving/Deteriorating are simply skipped, falling through toward
+    Neutral, per the brief."""
+    macd_hist = macd - macd_signal
+
     if macd > macd_signal and macd > 0 and rsi >= 60 and roc > 0:
         return "Accelerating Bullish"
-    if macd < macd_signal and macd < 0 and rsi <= 40 and roc < 0:
-        return "Accelerating Bearish"
     if macd > macd_signal and rsi >= 50 and roc >= 0:
         return "Bullish"
+    if prior is not None and _momentum_improving(macd_hist, rsi, roc, prior):
+        return "Improving"
+    if macd < macd_signal and macd < 0 and rsi <= 40 and roc < 0:
+        return "Accelerating Bearish"
     if macd < macd_signal and rsi < 50 and roc <= 0:
         return "Bearish"
+    if prior is not None and _momentum_deteriorating(macd_hist, rsi, roc, prior):
+        return "Deteriorating"
     return "Neutral"
 
 
@@ -222,7 +289,22 @@ def score_row(row: dict, config: dict) -> dict:
     trend_score = trend60_score + trend120_score + ma_align_score
     trend_regime = _trend_regime(price60, price120, ma_align, config)
 
-    momentum_regime = _momentum_regime(row["MACD"], row["MACD_Signal"], row["RSI14"], row["ROC20"])
+    # Prior-period momentum inputs (~5 trading days back, added by
+    # compute_derived_series). Missing at the very start of a symbol's
+    # history -- pd.isna check keeps that "no prior data" case explicit
+    # rather than silently comparing against NaN.
+    prior_fields = ("MACD_prior", "MACD_Signal_prior", "RSI14_prior", "ROC20_prior")
+    if all(pd.notna(row.get(field)) for field in prior_fields):
+        prior = {
+            "MACD": row["MACD_prior"],
+            "MACD_Signal": row["MACD_Signal_prior"],
+            "RSI14": row["RSI14_prior"],
+            "ROC20": row["ROC20_prior"],
+        }
+    else:
+        prior = None
+
+    momentum_regime = _momentum_regime(row["MACD"], row["MACD_Signal"], row["RSI14"], row["ROC20"], prior)
     momentum_adj = MOMENTUM_ADJ_BY_REGIME[momentum_regime]
 
     volatility_regime = _volatility_regime(row["ATR_Ratio"], row["BBW_Percentile"], config)
