@@ -37,13 +37,28 @@
   html, body {
     margin: 0;
     padding: 0;
+    height: 100%;
     background: var(--page);
     color: var(--text-primary);
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
     -webkit-font-smoothing: antialiased;
   }
 
+  /* Page is a fixed-viewport flex column (header / filters / scrolling
+     table / footer) rather than letting the whole document scroll. This
+     is what makes the sticky thead actually work: .table-scroll is the
+     flex child that stretches to fill remaining height and scrolls
+     internally (both directions), so it's a real scroll container that
+     position:sticky can anchor to -- see the .table-scroll comment
+     below for why the previous whole-page-scroll layout broke this. */
+  body {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
   header {
+    flex: 0 0 auto;
     padding: 20px 20px 14px;
     border-bottom: 1px solid var(--border);
   }
@@ -68,6 +83,7 @@
 
   /* ---------- Filters ---------- */
   .filters {
+    flex: 0 0 auto;
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
@@ -106,10 +122,31 @@
   }
   .filter-btn.primary { font-weight: 700; }
 
+  /* Combo (Group+Subgroup) buttons: on desktop these are just ordinary
+     flex items flowing in the same wrapping row as All/Stocks/ETFs
+     (display:contents makes the wrapper itself invisible to layout).
+     The toggle button only appears on mobile -- see the media query. */
+  .combo-filters { display: contents; }
+  .filter-toggle { display: none; }
+
   /* ---------- Table shell ---------- */
+  /* flex:1 fills the remaining viewport height; overflow:auto makes this
+     element -- not the page -- the scroll container for both axes. That
+     matters because setting overflow-x:auto alone forces the browser to
+     also treat overflow-y as non-visible (a CSS quirk: "if one of
+     overflow-x/-y is not visible, visible on the other computes to
+     auto"), so this element was already the vertical scroll container
+     even before this fix -- it just had no height limit, so it never
+     actually scrolled internally and the *page* scrolled instead,
+     leaving the sticky thead anchored to a container that never moved
+     on screen. Giving it a real bounded height makes it scroll for
+     real, which is what position:sticky needs to work.  */
   .table-scroll {
-    overflow-x: auto;
-    overflow-y: visible;
+    flex: 1 1 auto;
+    min-height: 0; /* flex children default to min-height:auto, which
+                       would otherwise refuse to shrink below content
+                       size and defeat the internal scroll entirely */
+    overflow: auto;
     -webkit-overflow-scrolling: touch;
   }
 
@@ -229,7 +266,9 @@
   .step-0 { background: var(--step-0-bg); color: var(--step-0-fg); }
 
   footer {
-    padding: 14px 20px 28px;
+    flex: 0 0 auto;
+    padding: 8px 20px;
+    border-top: 1px solid var(--border);
     color: var(--text-muted);
     font-size: 11.5px;
   }
@@ -239,6 +278,26 @@
     header h1 { font-size: 17px; }
     .filters { padding: 10px 14px; gap: 5px; }
     .filter-btn { font-size: 11.5px; padding: 5px 9px; }
+
+    /* Only All/Stocks/ETFs + the toggle show by default; the Group+
+       Subgroup combo buttons collapse into a hidden block that expands
+       below on tap, instead of wrapping into several rows. */
+    .filter-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .combo-filters {
+      display: none;
+      width: 100%;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 6px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+    .combo-filters.expanded { display: flex; }
+
     th.col-name, td.col-name { width: 104px; min-width: 104px; max-width: 104px; }
     th.col-symbol, td.col-symbol { width: 60px; min-width: 60px; max-width: 60px; }
     td.col-name::after { display: block; }
@@ -462,6 +521,24 @@
     sep.className = "sep";
     wrap.appendChild(sep);
 
+    // Mobile-only: toggles the combo buttons open/closed below (see the
+    // 640px media query -- on desktop this button stays display:none
+    // and .combo-filters is display:contents, so it never collapses).
+    const comboPanel = document.createElement("div");
+    comboPanel.className = "combo-filters";
+    comboPanel.id = "comboFilters";
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "filter-btn filter-toggle";
+    toggle.innerHTML = 'More <span class="caret">▾</span>';
+    toggle.addEventListener("click", function () {
+      const expanded = comboPanel.classList.toggle("expanded");
+      toggle.querySelector(".caret").textContent = expanded ? "▴" : "▾";
+    });
+    wrap.appendChild(toggle);
+    wrap.appendChild(comboPanel);
+
     // Unique Group+Subgroup combos actually present in the data, Stocks
     // combos first then ETFs, alphabetical by subgroup within each.
     const seen = new Set();
@@ -478,7 +555,13 @@
       return a.subgroup.localeCompare(b.subgroup);
     });
     combos.forEach(function (c) {
-      wrap.appendChild(makeFilterBtn(c.subgroup + " " + c.group, { kind: "combo", group: c.group, subgroup: c.subgroup }, false));
+      const btn = makeFilterBtn(c.subgroup + " " + c.group, { kind: "combo", group: c.group, subgroup: c.subgroup }, false);
+      // Picking a combo on mobile closes the panel back up, like a menu.
+      btn.addEventListener("click", function () {
+        comboPanel.classList.remove("expanded");
+        toggle.querySelector(".caret").textContent = "▾";
+      });
+      comboPanel.appendChild(btn);
     });
   }
 
