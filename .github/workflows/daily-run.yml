@@ -14,6 +14,11 @@ on:
     - cron: "11 0 * * *"
   workflow_dispatch: {}
 
+# GITHUB_TOKEN defaults to read-only contents access on many repos;
+# explicitly grant write so the commit-back step below can push.
+permissions:
+  contents: write
+
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
@@ -34,3 +39,30 @@ jobs:
           EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
           AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
         run: python main.py --write
+
+      # if: always() so this still runs (and commits whatever data was
+      # successfully gathered) even if main.py exited non-zero because
+      # some symbols errored -- see main.py's per-symbol error handling.
+      # If main.py failed before ever regenerating the file, the
+      # checked-out copy is unchanged and the diff check below is a
+      # no-op, so this stays safe either way. The job's overall status
+      # still reflects a failed "Run pipeline" step regardless.
+      - name: Commit dashboard_data.json if it changed
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet -- dashboard_data.json; then
+            echo "dashboard_data.json unchanged -- nothing to commit."
+            exit 0
+          fi
+
+          git add dashboard_data.json
+          git commit -m "Update dashboard_data.json [skip ci]"
+
+          # Rebase onto the latest main in case anything else pushed
+          # during the run, then push. Retry once after a re-pull if the
+          # push is rejected, so a same-minute race doesn't fail the job.
+          git pull --rebase origin main
+          git push origin HEAD:main || (git pull --rebase origin main && git push origin HEAD:main)
