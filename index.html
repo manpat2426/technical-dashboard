@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Technical Dashboard</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page:           #0d0d0d;
+    --surface:        #16171a;
+    --surface-raised: #1c1e22;
+    --border:         rgba(255,255,255,0.08);
+    --border-strong:  rgba(255,255,255,0.16);
+    --border-group:   rgba(255,255,255,0.38);
+    --text-primary:   #f2f2f0;
+    --text-secondary: #a3a5ab;
+    --text-muted:     #6b6d73;
+    --accent:         #4d8ef2;
+
+    /* 7-step diverging scale, shared by TechScore and every regime column.
+       Step 7 = strongest positive, step 1 = strongest negative. Text color
+       per step is chosen for contrast against that step's background, not
+       a fixed light/dark split. */
+    --step-7-bg: #0f5c2e; --step-7-fg: #eafbf0;
+    --step-6-bg: #1f8a45; --step-6-fg: #ffffff;
+    --step-5-bg: #9fdba6; --step-5-fg: #123317;
+    --step-4-bg: #eed15a; --step-4-fg: #3a2f00;
+    --step-3-bg: #e8974f; --step-3-fg: #3a2100;
+    --step-2-bg: #c8483a; --step-2-fg: #ffffff;
+    --step-1-bg: #7a1f1f; --step-1-fg: #ffe6e6;
+    --step-0-bg: transparent; --step-0-fg: var(--text-muted);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  header {
+    padding: 20px 20px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 {
+    margin: 0 0 4px;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+  }
+  header .updated {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  header .updated .dot {
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #2fbf5f;
+    margin-right: 6px;
+    box-shadow: 0 0 0 2px rgba(47,191,95,0.2);
+  }
+
+  /* ---------- Filters ---------- */
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 12px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .filters .sep {
+    width: 1px;
+    background: var(--border-strong);
+    margin: 2px 4px;
+    align-self: stretch;
+  }
+  .filter-btn {
+    appearance: none;
+    border: 1px solid var(--border-strong);
+    background: var(--surface-raised);
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 500;
+    padding: 6px 11px;
+    border-radius: 999px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+  .filter-btn:hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+  }
+  .filter-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #ffffff;
+  }
+  .filter-btn.primary { font-weight: 700; }
+
+  /* ---------- Table shell ---------- */
+  .table-scroll {
+    overflow-x: auto;
+    overflow-y: visible;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  table {
+    border-collapse: separate;
+    border-spacing: 0;
+    table-layout: fixed;
+    width: max-content;
+    min-width: 100%;
+    font-size: 12.5px;
+  }
+
+  thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: var(--surface-raised);
+    border-bottom: 1px solid var(--border-strong);
+    color: var(--text-secondary);
+    font-weight: 600;
+    text-align: center;
+    padding: 0;
+  }
+  thead tr.group-row th {
+    top: 0;
+    height: 22px;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+  }
+  thead tr.col-row th {
+    top: 22px;
+    height: 30px;
+  }
+  thead tr.col-row th button {
+    all: unset;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
+    font: inherit;
+    font-weight: 600;
+    color: inherit;
+    padding: 0 4px;
+  }
+  thead tr.col-row th button:hover { color: var(--text-primary); }
+  thead th .arrow { font-size: 9px; opacity: 0.7; }
+  thead th.sorted { color: var(--accent); }
+  thead th.sorted .arrow { opacity: 1; }
+
+  /* Column-group boundaries (TechScore / Current Regime / Trend /
+     Momentum / Volatility): thicker, higher-contrast than the ordinary
+     1px cell borders so the sections read as distinct blocks. Applied to
+     the group-row supergroup cells and to the first data column of each
+     group in both the header and body. */
+  tr.group-row th { border-left: 2px solid var(--border-group); }
+  tr.group-row th:first-child { border-left: none; }
+  th.group-start, td.group-start { border-left: 2px solid var(--border-group); }
+
+  th.col-symbol, td.col-symbol,
+  th.col-name, td.col-name {
+    position: sticky;
+    z-index: 2;
+    background: var(--surface);
+    text-align: left;
+  }
+  thead th.col-symbol, thead th.col-name { z-index: 4; background: var(--surface-raised); }
+  th.col-symbol, td.col-symbol { left: 0; width: 72px; min-width: 72px; max-width: 72px; }
+  th.col-name, td.col-name { left: 72px; width: 150px; min-width: 150px; max-width: 150px; }
+  td.col-name::after, th.col-symbol::after, th.col-name::after {
+    content: "";
+    position: absolute;
+    top: 0; right: -1px; bottom: 0;
+    width: 1px;
+    background: var(--border-strong);
+  }
+
+  tbody td {
+    padding: 5px 6px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  tbody tr:hover td:not(.col-symbol):not(.col-name) { filter: brightness(1.08); }
+  tbody tr:hover td.col-symbol, tbody tr:hover td.col-name { background: var(--surface-raised); }
+
+  td.col-symbol { font-weight: 700; letter-spacing: 0.2px; }
+  td.col-name { color: var(--text-secondary); font-weight: 400; }
+
+  td.cell-ts {
+    width: 44px; min-width: 44px; max-width: 44px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+  td.cell-regime {
+    width: 108px; min-width: 108px; max-width: 108px;
+    text-align: center;
+    font-weight: 500;
+  }
+  th.grp-techscore { width: 44px; min-width: 44px; max-width: 44px; }
+  th.grp-regime { width: 108px; min-width: 108px; max-width: 108px; }
+
+  .step-7 { background: var(--step-7-bg); color: var(--step-7-fg); }
+  .step-6 { background: var(--step-6-bg); color: var(--step-6-fg); }
+  .step-5 { background: var(--step-5-bg); color: var(--step-5-fg); }
+  .step-4 { background: var(--step-4-bg); color: var(--step-4-fg); }
+  .step-3 { background: var(--step-3-bg); color: var(--step-3-fg); }
+  .step-2 { background: var(--step-2-bg); color: var(--step-2-fg); }
+  .step-1 { background: var(--step-1-bg); color: var(--step-1-fg); }
+  .step-0 { background: var(--step-0-bg); color: var(--step-0-fg); }
+
+  footer {
+    padding: 14px 20px 28px;
+    color: var(--text-muted);
+    font-size: 11.5px;
+  }
+
+  @media (max-width: 640px) {
+    header { padding: 14px 14px 10px; }
+    header h1 { font-size: 17px; }
+    .filters { padding: 10px 14px; gap: 5px; }
+    .filter-btn { font-size: 11.5px; padding: 5px 9px; }
+    th.col-name, td.col-name { width: 104px; min-width: 104px; max-width: 104px; }
+    th.col-symbol, td.col-symbol { width: 60px; min-width: 60px; max-width: 60px; }
+    td.col-name::after { display: block; }
+    table { font-size: 11.5px; }
+    td.cell-regime, th.grp-regime { width: 90px; min-width: 90px; max-width: 90px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Technical Dashboard</h1>
+  <div class="updated" id="updated"><span class="dot"></span>Loading…</div>
+</header>
+
+<div class="filters" id="filters"></div>
+
+<div class="table-scroll">
+  <table id="tbl">
+    <thead>
+      <tr class="group-row" id="groupRow"></tr>
+      <tr class="col-row" id="colRow"></tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<footer id="footer"></footer>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- Column model ----------
+  // Each column: { key, label, kind: 'symbol'|'name'|'ts'|'regime', regimeType, group }
+  const TS_KEYS = ["TechScore", "TechScore_1W", "TechScore_2W", "TechScore_3W", "TechScore_1M", "TechScore_2M", "TechScore_3M"];
+  const TS_LABELS = { TechScore: "Now", TechScore_1W: "1W", TechScore_2W: "2W", TechScore_3W: "3W", TechScore_1M: "1M", TechScore_2M: "2M", TechScore_3M: "3M" };
+
+  const CURRENT_REGIME_KEYS = [
+    { key: "TrendRegime", label: "Trend", type: "trend" },
+    { key: "MomentumRegime", label: "Momentum", type: "momentum" },
+    { key: "VolatilityRegime", label: "Volatility", type: "volatility" },
+  ];
+
+  function checkpointCols(prefix, type) {
+    return ["1W", "2W", "3W", "1M"].map(function (suffix) {
+      return { key: prefix + "_" + suffix, label: suffix, type: type };
+    });
+  }
+
+  const COLUMNS = [
+    { key: "Symbol", label: "Symbol", kind: "symbol" },
+    { key: "Name", label: "Name", kind: "name" },
+  ]
+  .concat(TS_KEYS.map(function (k) { return { key: k, label: TS_LABELS[k], kind: "ts", group: "techscore" }; }))
+  .concat(CURRENT_REGIME_KEYS.map(function (c) { return { key: c.key, label: c.label, kind: "regime", regimeType: c.type, group: "current" }; }))
+  .concat(checkpointCols("TrendRegime", "trend").map(function (c) { return Object.assign({}, c, { kind: "regime", regimeType: "trend", group: "trend" }); }))
+  .concat(checkpointCols("MomentumRegime", "momentum").map(function (c) { return Object.assign({}, c, { kind: "regime", regimeType: "momentum", group: "momentum" }); }))
+  .concat(checkpointCols("VolatilityRegime", "volatility").map(function (c) { return Object.assign({}, c, { kind: "regime", regimeType: "volatility", group: "volatility" }); }));
+
+  const GROUP_HEADERS = [
+    { group: "techscore", label: "TechScore", span: TS_KEYS.length },
+    { group: "current", label: "Current Regime", span: CURRENT_REGIME_KEYS.length },
+    { group: "trend", label: "Trend", span: 4 },
+    { group: "momentum", label: "Momentum", span: 4 },
+    { group: "volatility", label: "Volatility", span: 4 },
+  ];
+
+  // Marks the first column of each of the 5 groups above (where `group`
+  // changes from the previous column) so buildHeader()/render() can add
+  // the thicker group-boundary border there only, not on every column.
+  COLUMNS.forEach(function (col, i) {
+    col.groupStart = i > 0 && col.group !== COLUMNS[i - 1].group && !!col.group;
+  });
+
+  // ---------- Color / rank tables (shared 7-step diverging scale) ----------
+  const TREND_STEP = {
+    "Strong Uptrend": 7, "Uptrend": 6, "Early Uptrend / Recovery": 5,
+    "Neutral / Transition": 4, "Early Downtrend / Roll Over": 3,
+    "Downtrend": 2, "Strong Downtrend": 1,
+  };
+  const MOMENTUM_STEP = {
+    "Accelerating Bullish": 7, "Bullish": 6, "Improving": 5,
+    "Neutral": 4, "Deteriorating": 3, "Bearish": 2, "Accelerating Bearish": 1,
+  };
+  const VOLATILITY_STEP = {
+    "Compressed / Squeeze": 6, "Orderly": 5, "Expanding": 4,
+    "Elevated": 3, "Extreme / Unstable": 1,
+  };
+  const STEP_TABLES = { trend: TREND_STEP, momentum: MOMENTUM_STEP, volatility: VOLATILITY_STEP };
+
+  function techScoreStep(v) {
+    if (v === null || v === undefined) return 0;
+    if (v >= 6) return 7;
+    if (v >= 3) return 6;
+    if (v >= 1) return 5;
+    if (v === 0) return 4;
+    if (v >= -2) return 3;
+    if (v >= -5) return 2;
+    return 1;
+  }
+  function regimeStep(type, value) {
+    if (value === null || value === undefined) return 0;
+    const table = STEP_TABLES[type];
+    return (table && table[value]) || 0;
+  }
+
+  // ---------- State ----------
+  let ALL_ROWS = [];
+  let sortKey = "TechScore";
+  let sortDir = "desc";
+  let activeFilter = { kind: "all" }; // {kind:'all'} | {kind:'group', group} | {kind:'combo', group, subgroup}
+
+  // ---------- Fetch + boot ----------
+  fetch("dashboard_data.json")
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (data) {
+      ALL_ROWS = data.symbols || [];
+      document.getElementById("updated").innerHTML =
+        '<span class="dot"></span>Data as of ' + formatTimestamp(data.last_updated);
+      document.getElementById("footer").textContent =
+        ALL_ROWS.length + " securities • click a column header to sort • scroll horizontally for history";
+      buildHeader();
+      buildFilters();
+      render();
+    })
+    .catch(function (err) {
+      document.getElementById("updated").textContent = "Failed to load dashboard_data.json: " + err.message;
+    });
+
+  function formatTimestamp(iso) {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString(undefined, { dateStyle: "long", timeStyle: "short" });
+    } catch (e) {
+      return iso;
+    }
+  }
+
+  // ---------- Header ----------
+  function buildHeader() {
+    const groupRow = document.getElementById("groupRow");
+    const colRow = document.getElementById("colRow");
+
+    groupRow.innerHTML = "";
+    const corner = document.createElement("th");
+    corner.colSpan = 2;
+    corner.className = "col-symbol";
+    corner.style.left = "0";
+    groupRow.appendChild(corner);
+    GROUP_HEADERS.forEach(function (g) {
+      const th = document.createElement("th");
+      th.colSpan = g.span;
+      th.textContent = g.label;
+      groupRow.appendChild(th);
+    });
+
+    colRow.innerHTML = "";
+    COLUMNS.forEach(function (col) {
+      const th = document.createElement("th");
+      if (col.kind === "symbol") th.className = "col-symbol";
+      else if (col.kind === "name") th.className = "col-name";
+      else if (col.kind === "ts") th.className = "grp-techscore";
+      else th.className = "grp-regime";
+      if (col.groupStart) th.classList.add("group-start");
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      const labelSpan = document.createElement("span");
+      labelSpan.textContent = col.label;
+      const arrow = document.createElement("span");
+      arrow.className = "arrow";
+      btn.appendChild(labelSpan);
+      btn.appendChild(arrow);
+      btn.addEventListener("click", function () { onSort(col.key); });
+      th.appendChild(btn);
+      th.dataset.key = col.key;
+      colRow.appendChild(th);
+    });
+    updateSortIndicators();
+  }
+
+  function updateSortIndicators() {
+    document.querySelectorAll("#colRow th").forEach(function (th) {
+      const arrow = th.querySelector(".arrow");
+      if (!arrow) return;
+      if (th.dataset.key === sortKey) {
+        th.classList.add("sorted");
+        arrow.textContent = sortDir === "asc" ? "▲" : "▼";
+      } else {
+        th.classList.remove("sorted");
+        arrow.textContent = "";
+      }
+    });
+  }
+
+  function onSort(key) {
+    if (sortKey === key) {
+      sortDir = sortDir === "asc" ? "desc" : "asc";
+    } else {
+      sortKey = key;
+      sortDir = key.indexOf("TechScore") === 0 || key.indexOf("TechScore_") === 0 ? "desc" : "asc";
+    }
+    updateSortIndicators();
+    render();
+  }
+
+  // ---------- Filters ----------
+  function buildFilters() {
+    const wrap = document.getElementById("filters");
+    wrap.innerHTML = "";
+
+    wrap.appendChild(makeFilterBtn("All", { kind: "all" }, true));
+    wrap.appendChild(makeFilterBtn("Stocks", { kind: "group", group: "Stocks" }, true));
+    wrap.appendChild(makeFilterBtn("ETFs", { kind: "group", group: "ETFs" }, true));
+
+    const sep = document.createElement("div");
+    sep.className = "sep";
+    wrap.appendChild(sep);
+
+    // Unique Group+Subgroup combos actually present in the data, Stocks
+    // combos first then ETFs, alphabetical by subgroup within each.
+    const seen = new Set();
+    const combos = [];
+    ALL_ROWS.forEach(function (row) {
+      if (!row.Group || !row.Subgroup) return;
+      const k = row.Group + "||" + row.Subgroup;
+      if (seen.has(k)) return;
+      seen.add(k);
+      combos.push({ group: row.Group, subgroup: row.Subgroup });
+    });
+    combos.sort(function (a, b) {
+      if (a.group !== b.group) return a.group === "Stocks" ? -1 : 1;
+      return a.subgroup.localeCompare(b.subgroup);
+    });
+    combos.forEach(function (c) {
+      wrap.appendChild(makeFilterBtn(c.subgroup + " " + c.group, { kind: "combo", group: c.group, subgroup: c.subgroup }, false));
+    });
+  }
+
+  function makeFilterBtn(label, filter, primary) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "filter-btn" + (primary ? " primary" : "");
+    btn.textContent = label;
+    btn.addEventListener("click", function () {
+      activeFilter = filter;
+      document.querySelectorAll(".filter-btn").forEach(function (b) { b.classList.remove("active"); });
+      btn.classList.add("active");
+      render();
+    });
+    if (filter.kind === "all") btn.classList.add("active");
+    return btn;
+  }
+
+  function matchesFilter(row) {
+    if (activeFilter.kind === "all") return true;
+    if (activeFilter.kind === "group") return row.Group === activeFilter.group;
+    if (activeFilter.kind === "combo") return row.Group === activeFilter.group && row.Subgroup === activeFilter.subgroup;
+    return true;
+  }
+
+  // ---------- Sorting ----------
+  function sortValue(row, key) {
+    const col = COLUMNS.find(function (c) { return c.key === key; });
+    if (!col) return row[key];
+    if (col.kind === "ts") return row[key];
+    if (col.kind === "regime") return regimeStep(col.regimeType, row[key]);
+    return row[key];
+  }
+
+  function compareRows(a, b) {
+    const av = sortValue(a, sortKey);
+    const bv = sortValue(b, sortKey);
+    const aMissing = av === null || av === undefined || av === "";
+    const bMissing = bv === null || bv === undefined || bv === "";
+    if (aMissing && bMissing) return 0;
+    if (aMissing) return 1;   // missing always sinks to the bottom
+    if (bMissing) return -1;
+    let cmp;
+    if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
+    else cmp = String(av).localeCompare(String(bv));
+    return sortDir === "asc" ? cmp : -cmp;
+  }
+
+  // ---------- Render ----------
+  function render() {
+    const rows = ALL_ROWS.filter(matchesFilter).slice().sort(compareRows);
+    const tbody = document.getElementById("tbody");
+    tbody.innerHTML = "";
+    const frag = document.createDocumentFragment();
+
+    rows.forEach(function (row) {
+      const tr = document.createElement("tr");
+      COLUMNS.forEach(function (col) {
+        const td = document.createElement("td");
+        if (col.kind === "symbol") {
+          td.className = "col-symbol";
+          td.textContent = row.Symbol || "";
+        } else if (col.kind === "name") {
+          td.className = "col-name";
+          td.textContent = row.Name || "";
+          td.title = row.Name || "";
+        } else if (col.kind === "ts") {
+          const v = row[col.key];
+          td.className = "cell-ts step-" + techScoreStep(v);
+          td.textContent = (v === null || v === undefined) ? "" : v;
+        } else {
+          const v = row[col.key];
+          const step = regimeStep(col.regimeType, v);
+          td.className = "cell-regime step-" + step;
+          td.textContent = v || "";
+          if (v) td.title = v;
+        }
+        if (col.groupStart) td.classList.add("group-start");
+        tr.appendChild(td);
+      });
+      frag.appendChild(tr);
+    });
+    tbody.appendChild(frag);
+  }
+})();
+</script>
+
+</body>
+</html>
