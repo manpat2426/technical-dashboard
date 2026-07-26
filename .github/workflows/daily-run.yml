@@ -2,10 +2,16 @@ name: Daily Technical Dashboard Run
 
 on:
   schedule:
-    # 02:00 UTC = 9:00 PM EST / 10:00 PM EDT. US markets close 4:00 PM ET
-    # and EODHD updates EOD data a few hours after that -- this comfortably
-    # clears both, in either daylight-saving state, year-round.
-    - cron: "0 2 * * *"
+    # 00:11 UTC = 7:11 PM EST / 8:11 PM EDT -- roughly 3-4 hours after the
+    # 4:00 PM ET market close, year-round. Deliberately off the top of the
+    # hour (minute 11, not 0) since GitHub documents -- and we confirmed
+    # empirically, runs were landing 6-10 hours late at "0 2 * * *" -- that
+    # exact-hour-boundary schedules queue behind heavy contention. Note:
+    # this is a tighter margin than the previous 02:00 UTC schedule,
+    # especially in winter (EST) where it's only ~11 minutes past the
+    # 7:00 PM ET floor we originally targeted; if EODHD's post-close
+    # update ever lags, push this later.
+    - cron: "11 0 * * *"
   workflow_dispatch: {}
 
 jobs:
