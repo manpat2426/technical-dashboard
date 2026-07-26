@@ -307,7 +307,10 @@
     }
     .combo-filters.expanded { display: flex; }
 
-    th.col-name, td.col-name { width: 104px; min-width: 104px; max-width: 104px; }
+    /* Name's sticky "left" must match Symbol's mobile width exactly, or
+       there's a gap where scrolled-past columns show through -- this
+       was the actual "floating" bug, not a rendering lag. */
+    th.col-name, td.col-name { left: 60px; width: 104px; min-width: 104px; max-width: 104px; }
     th.col-symbol, td.col-symbol { width: 60px; min-width: 60px; max-width: 60px; }
     td.col-name::after { display: block; }
     table { font-size: 11.5px; }
