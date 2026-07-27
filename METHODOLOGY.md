@@ -2,7 +2,7 @@
 
 *This document explains the **what** and the **why** of the technical model: what each indicator measures, why it was chosen, how the scores and regimes are built, and how to read the output. It is the companion to `DEPLOYMENT.md`, which covers how the system is built and hosted.*
 
-*A note on precise values: this document explains the reasoning and structure of the model. Wherever specific numeric thresholds or parameters appear, they reflect the intended design, but the **authoritative source is the `Config` table** in the Airtable base — the model reads its parameters from there, so `Config` is always the ground truth if a value here and a value there ever disagree.*
+*A note on precise values: this document explains the reasoning and structure of the model. Most parameters — the trend thresholds, the volatility thresholds, and every indicator's period/lookback — live in the **`Config` table** in the Airtable base, and the model reads them from there at runtime, so `Config` is the ground truth for those if a value here and a value there ever disagree. **The exception:** the momentum-regime cutoffs (the RSI thresholds that classify Accelerating Bullish/Bullish/Accelerating Bearish/Bearish) and the Improving/Deteriorating constants (the ~5-trading-day lookback, the RSI ±3 and ROC ±0.02 thresholds) are currently **hardcoded directly in `scoring.py`**, not read from Config — so for those specific values, `scoring.py` itself is the ground truth. See Section 6 for where this applies.*
 
 ---
 
@@ -208,15 +208,17 @@ These two momentum regimes are special because, unlike every other regime in the
 
 The logic compares today's momentum inputs against the values from roughly **5 trading days earlier** (the nearest prior snapshot ~5 trading days back). To be labeled *Improving*, a security must not already be Bullish/Accelerating Bullish, **and all three** of these must be turning up versus ~5 days ago:
 
+*Unlike the trend and volatility thresholds elsewhere in this document, the lookback and the three thresholds below are **not** Config parameters — they're hardcoded constants inside `scoring.py`. `scoring.py` is the ground truth for these specific values; changing them requires editing and redeploying the script, not editing a Config row.*
+
 - The MACD histogram (MACD minus its signal) has increased.
 - RSI has risen by at least **3 points**.
 - ROC has risen and moved toward/above zero (by at least **0.02**, i.e. two percentage points, in fractional terms).
 
 *Deteriorating* is the exact mirror (not already Bearish, and all three turning down).
 
-**Why "all three must agree":** this rule was a deliberate tightening. An earlier version required only *two of three* conditions, which caused these regimes to fire on roughly a third of all days and to flip back and forth in choppy periods — that's noise, not signal. Requiring **all three inputs to agree** raises the bar to a genuinely broad-based momentum turn. After the change, these regimes fire on roughly **17%** of days, in spaced-out streaks with neutral gaps between them — meaningful transitions rather than chatter. The specific thresholds (RSI ±3, ROC ±0.02) are modest-but-non-trivial: large enough to filter daily wiggle, small enough to catch a real turn early. If a security has no snapshot ~5 days prior (e.g. at the very start of its history), these regimes are skipped and it falls through to Neutral.
+**Why "all three must agree":** this rule was a deliberate tightening. An earlier version required only *two of three* conditions, which caused these regimes to fire on roughly a third of all days and to flip back and forth in choppy periods — that's noise, not signal. Requiring **all three inputs to agree** raises the bar to a genuinely broad-based momentum turn. In testing during development, this tightened version fired on roughly **17%** of days, in spaced-out streaks with neutral gaps between them — meaningful transitions rather than chatter. That 17% figure is a development-time observation from testing, not a continuously-verified live metric — it isn't recomputed or asserted anywhere in the code, so treat it as directional rather than exact if you're checking current behavior. The specific thresholds (RSI ±3, ROC ±0.02) are modest-but-non-trivial: large enough to filter daily wiggle, small enough to catch a real turn early. If a security has no snapshot ~5 days prior (e.g. at the very start of its history), these regimes are skipped and it falls through to Neutral.
 
-*These thresholds are tunable.* Because the model is transparent and history is stored, you can observe how often Improving/Deteriorating actually fire and adjust the lookback or thresholds if they feel too twitchy or too quiet.
+*These thresholds are tunable, but not from Config.* Because they're hardcoded in `scoring.py` (see above) rather than read from the Config table, tuning them means editing that file directly, then committing and deploying the change — unlike the trend/volatility thresholds, which take effect on the next run just by editing a Config row. The model is transparent and history is stored, so you can still observe how often Improving/Deteriorating actually fire and adjust the lookback or thresholds in code if they feel too twitchy or too quiet.
 
 ---
 
