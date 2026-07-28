@@ -4,17 +4,19 @@ Airtable REST API (not the Airtable SDK, to keep dependencies minimal).
 
 Field names used below were confirmed against the live base schema
 (base appummriRwPGUNjsj) immediately before writing this file -- see
-Config / Symbols / Indicators / Scores_Current / Scores_History field
-lists. If Airtable columns are ever renamed, this file (and only this
-file) needs updating.
+Config / Symbols / Indicators / Scores_Current field lists. If Airtable
+columns are ever renamed, this file (and only this file) needs updating.
 
 Write strategy per table:
   - Config, Symbols: read-only from this script's perspective.
   - Indicators, Scores_Current: one row per symbol, replaced in place
     each run (upsert keyed by Symbol).
-  - Scores_History: one row per symbol PER DATE, upserted keyed by
-    (Symbol, Date) so re-running or re-backfilling never creates
-    duplicate snapshot rows.
+
+Dated history is intentionally not written here -- it used to be an
+Airtable table (Scores_History) but is now appended to history_log.jsonl
+in the repo instead (handled directly in main.py, not through this
+module), to keep the Airtable base under its free-tier record limit.
+See main.py's module docstring for the full reasoning.
 """
 
 import requests
@@ -26,7 +28,6 @@ from config import (
     TABLE_SYMBOLS,
     TABLE_INDICATORS,
     TABLE_SCORES_CURRENT,
-    TABLE_SCORES_HISTORY,
 )
 
 AIRTABLE_API_URL = "https://api.airtable.com/v0/{base_id}/{table_id}"
@@ -67,9 +68,9 @@ def _list_all_records(table_id: str, params: dict = None) -> list:
 def _batch_create(table_id: str, field_rows: list) -> None:
     """Create records, chunked to Airtable's 10-per-request limit.
     typecast=False on purpose: every singleSelect option this pipeline
-    writes (regimes, SnapshotType) already exists in the base, so a
-    rejected write here means a real mismatch worth seeing, not something
-    to silently paper over by auto-creating a new option."""
+    writes (regimes) already exists in the base, so a rejected write here
+    means a real mismatch worth seeing, not something to silently paper
+    over by auto-creating a new option."""
     url = AIRTABLE_API_URL.format(base_id=AIRTABLE_BASE_ID, table_id=table_id)
     for i in range(0, len(field_rows), BATCH_SIZE):
         chunk = field_rows[i:i + BATCH_SIZE]
@@ -159,7 +160,7 @@ def upsert_indicators(rows: list) -> None:
     Date, Close, MA60, MA120, ATR20, ATR90Avg, BBUpper, BBLower, BBMid,
     MACD, MACD_Signal, RSI14, ROC20). Replaces each symbol's existing row
     in place; Indicators holds only the latest pull per symbol, not a
-    growing history (Scores_History is where dated history lives)."""
+    growing dated history."""
     existing = _list_all_records(TABLE_INDICATORS, {"fields[]": ["Symbol"]})
     existing_by_symbol = {
         r["fields"]["Symbol"]: r["id"] for r in existing if r["fields"].get("Symbol")
@@ -177,39 +178,3 @@ def upsert_scores_current(rows: list) -> None:
         r["fields"]["Symbol"]: r["id"] for r in existing if r["fields"].get("Symbol")
     }
     _upsert_by_key(TABLE_SCORES_CURRENT, rows, existing_by_symbol, key_fn=lambda row: row["Symbol"])
-
-
-# --- Scores_History (dated snapshots, upserted by Symbol+Date) ---
-
-def upsert_scores_history(rows: list, symbols: list) -> None:
-    """rows: list of dicts with Airtable field names as keys, including
-    Symbol and Date ("YYYY-MM-DD"). `symbols` scopes the existing-records
-    lookup to just the symbols being written this run, so we don't have
-    to fetch Airtable's entire (potentially large, ever-growing) history
-    table on every run."""
-    existing_by_key = _existing_history_keys(symbols)
-    _upsert_by_key(
-        TABLE_SCORES_HISTORY,
-        rows,
-        existing_by_key,
-        key_fn=lambda row: (row["Symbol"], row["Date"]),
-    )
-
-
-def _existing_history_keys(symbols: list) -> dict:
-    """(Symbol, Date) -> record id, for just the given symbols."""
-    if not symbols:
-        return {}
-    formula = "OR(" + ",".join(f"{{Symbol}}='{s}'" for s in symbols) + ")"
-    records = _list_all_records(TABLE_SCORES_HISTORY, {
-        "filterByFormula": formula,
-        "fields[]": ["Symbol", "Date"],
-    })
-    keys = {}
-    for record in records:
-        fields = record["fields"]
-        symbol = fields.get("Symbol")
-        record_date = fields.get("Date")
-        if symbol and record_date:
-            keys[(symbol, record_date)] = record["id"]
-    return keys

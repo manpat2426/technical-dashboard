@@ -235,7 +235,9 @@ The model tracks:
 
 **The retrieval rule:** for each checkpoint, the model retrieves the **most recent snapshot on or before the target date** — the nearest prior available snapshot. This is necessary because trading calendars don't have data on every exact target date (weekends, holidays), so requiring an exact-date match would leave gaps. Taking the nearest prior snapshot gives a consistent, always-available value.
 
-The snapshots themselves are accumulated in a dated history: the system backfills roughly six months of computed snapshots when a security is first added (so the checkpoints are populated immediately rather than after a months-long wait), and then appends a fresh snapshot on every run going forward.
+**Where the checkpoint values actually come from:** every run pulls ~2 years of EODHD history per symbol and scores every date in that window in memory (see `DEPLOYMENT.md` §5) — the checkpoints above are retrieved by looking backward within that same in-memory window, not from any separately persisted table. So the checkpoints are recomputed fresh every run rather than read back from stored history; that's what lets them be fully populated from a security's very first run rather than only after months of accumulated snapshots.
+
+Separately, the model also keeps a permanent audit log of every day's computed scores and regimes — for ad-hoc historical analysis later, not for anything the live model reads back. That log is a plain `history_log.jsonl` file in the repo, one line per symbol per day: the very first run bootstraps it with every scoreable date across the full ~2-year pull (since that's already computed in memory anyway, at no extra cost), and every run after that just appends the latest day. This log previously lived in an Airtable table (`Scores_History`); it was moved to a repo file to keep the Airtable base's record count small enough for the free tier — see `DEPLOYMENT.md` for the full reasoning.
 
 ---
 

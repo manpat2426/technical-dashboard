@@ -272,8 +272,9 @@ def score_row(row: dict, config: dict) -> dict:
     inputs (Close, MA60, MA120, ATR_Ratio, BBW, BBW_Percentile, MACD,
     MACD_Signal, RSI14, ROC20) and the live Config values.
 
-    Returns a dict of exactly the columns Scores_Current / Scores_History
-    need, ready to hand to airtable_client.
+    Returns a dict of exactly the columns Scores_Current needs, ready to
+    hand to airtable_client (also used in-memory for the checkpoint
+    lookback in main.py).
     """
     close = row["Close"]
     ma60 = row["MA60"]

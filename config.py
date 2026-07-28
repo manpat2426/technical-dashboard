@@ -34,7 +34,6 @@ TABLE_CONFIG = "tbl9RXltHV5PznVCK"
 TABLE_SYMBOLS = "tbluKC86ay1ab08MD"
 TABLE_INDICATORS = "tbloUYFRODxmP5fhh"
 TABLE_SCORES_CURRENT = "tblIb8EndSxFnkZhF"
-TABLE_SCORES_HISTORY = "tblq5bKWQQeIEsDkY"
 
 # --- EODHD API ---
 EODHD_TECHNICAL_URL = "https://eodhd.com/api/technical/{symbol}"
@@ -55,10 +54,10 @@ EODHD_REQUEST_PAUSE_SECONDS = 0.4
 TEST_MODE = False
 TEST_SYMBOLS = ["AAPL.US", "MSFT.US", "TLT.US", "XLU.US", "VWO.US"]
 
-# --- History / backfill window ---
+# --- History window ---
 # How much daily history to pull per symbol from EODHD in a single call.
-# This must comfortably exceed BACKFILL_MONTHS plus the longest lookback
-# used by any derived metric (MA120, ATR90Avg, BBW_Percentile's 125-period
-# window), so every backfilled snapshot date has a full lookback behind it.
+# This must comfortably exceed the longest checkpoint lookback used by
+# Scores_Current (3 months) plus the longest lookback used by any derived
+# metric (MA120, ATR90Avg, BBW_Percentile's 125-period window), so every
+# checkpoint date has a full indicator lookback behind it.
 HISTORY_YEARS = 2
-BACKFILL_MONTHS = 6

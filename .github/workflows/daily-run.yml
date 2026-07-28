@@ -43,23 +43,31 @@ jobs:
       # if: always() so this still runs (and commits whatever data was
       # successfully gathered) even if main.py exited non-zero because
       # some symbols errored -- see main.py's per-symbol error handling.
-      # If main.py failed before ever regenerating the file, the
-      # checked-out copy is unchanged and the diff check below is a
+      # If main.py failed before ever regenerating these files, the
+      # checked-out copies are unchanged and the status check below is a
       # no-op, so this stays safe either way. The job's overall status
       # still reflects a failed "Run pipeline" step regardless.
-      - name: Commit dashboard_data.json if it changed
+      - name: Commit dashboard_data.json and history_log.jsonl if they changed
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          if git diff --quiet -- dashboard_data.json; then
-            echo "dashboard_data.json unchanged -- nothing to commit."
+          # history_log.jsonl doesn't exist in the repo at all until the
+          # first successful run creates it, so `git status --porcelain`
+          # (which covers untracked new files too) is used instead of
+          # `git diff` (tracked-files-only) to catch that case.
+          CHANGES="$(git status --porcelain -- dashboard_data.json history_log.jsonl)"
+          if [ -z "$CHANGES" ]; then
+            echo "No output files changed -- nothing to commit."
             exit 0
           fi
 
           git add dashboard_data.json
-          git commit -m "Update dashboard_data.json [skip ci]"
+          if [ -f history_log.jsonl ]; then
+            git add history_log.jsonl
+          fi
+          git commit -m "Update dashboard_data.json and history_log.jsonl [skip ci]"
 
           # Rebase onto the latest main in case anything else pushed
           # during the run, then push. Retry once after a re-pull if the

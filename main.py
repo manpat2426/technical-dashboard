@@ -1,8 +1,20 @@
 """
 Orchestrates the full pipeline: for each symbol, pull + merge raw
 indicators (indicators.py), score every date (scoring.py), then write
-the latest values to Indicators/Scores_Current and the trailing backfill
-window to Scores_History (airtable_client.py).
+the latest values to Indicators and Scores_Current (airtable_client.py).
+
+Historical snapshots are NOT written to Airtable -- nothing in this
+pipeline ever reads dated history back (the 1W-3M checkpoints and the
+momentum ~5-day lookback are recomputed in-memory from the same EODHD
+pull every run; see build_checkpoint_fields() below and
+scoring.compute_derived_series()). Instead, a plain audit log of every
+day's computed scores/regimes is appended to history_log.jsonl in the
+repo (one JSON object per line): the very first run bootstraps it with
+every scoreable date from the ~2-year EODHD pull (free to do -- that
+data is already computed in memory), and every run after that just
+appends each symbol's latest date. This used to be an Airtable table
+(Scores_History) but was moved to a repo file to keep the Airtable base
+under its free-tier record limit; see DEPLOYMENT.md.
 
 Safety gate: running with no arguments only COMPUTES everything and
 prints a summary of what would be written -- it never touches Airtable.
@@ -28,13 +40,18 @@ import pandas as pd
 import airtable_client
 import indicators
 import scoring
-from config import TEST_MODE, TEST_SYMBOLS, BACKFILL_MONTHS
+from config import TEST_MODE, TEST_SYMBOLS
 
 # Written alongside repo root regardless of the working directory the
 # script is invoked from -- read by the (future) GitHub Pages dashboard
 # instead of it connecting to Airtable directly, so no Airtable token is
 # ever exposed client-side.
 DASHBOARD_JSON_PATH = Path(__file__).parent / "dashboard_data.json"
+
+# Plain append-only history log (repo root). Its presence/absence is how
+# run() decides whether this is the first-ever run (full backfill) or a
+# normal day (append latest only) -- see build_history_log_rows().
+HISTORY_LOG_PATH = Path(__file__).parent / "history_log.jsonl"
 
 # Exactly the fields the dashboard needs from each Scores_Current row.
 # Keeping this as an explicit list (rather than dumping the whole row)
@@ -114,14 +131,12 @@ def build_checkpoint_fields(scored: pd.DataFrame, anchor_date: str) -> dict:
     use calendar-month subtraction (like Excel/Airtable's EDATE), so a
     31st can resolve to a shorter month's last day.
 
-    Sourced from the same in-memory `scored` DataFrame that
-    build_scores_history_rows() uses -- NOT a live Airtable query. That
-    DataFrame already holds every scoreable date across the ~2-year pull
-    (comfortably more than the 3-month max lookback here) with the exact
-    same values Scores_History gets written from, so results are
-    identical to what a live Scores_History read would return, without
-    ~113 extra Airtable round-trips per run -- the same call made for
-    the momentum lookback in scoring.py.
+    Sourced entirely from the in-memory `scored` DataFrame computed
+    earlier in run() -- NOT an Airtable query. That DataFrame already
+    holds every scoreable date across the ~2-year EODHD pull (comfortably
+    more than the 3-month max lookback here), so this is a pure in-memory
+    lookback with no Airtable round-trips involved -- the same approach
+    used for the momentum lookback in scoring.py.
 
     Retrieval is "nearest available snapshot on or before the target
     date" (see _nearest_snapshot_on_or_before). If a target predates a
@@ -195,14 +210,19 @@ def build_scores_current_row(scored: pd.DataFrame, latest: pd.Series, name: str,
     return _to_native(fields)
 
 
-def build_scores_history_rows(window: pd.DataFrame, group: str, snapshot_type: str) -> list:
-    """One row per backfilled date, for Scores_History. `window` should
-    already be limited to the backfill period before calling this."""
-    rows = []
-    for record in window.to_dict("records"):
-        rows.append(_to_native({
+def build_history_log_rows(rows: pd.DataFrame) -> list:
+    """One dict per row of `rows` (a scored DataFrame), in the shape
+    appended to history_log.jsonl: Symbol, Date, and every score/regime
+    column. Same fields the old Airtable Scores_History table held,
+    minus Group/SnapshotType/Notes -- this is a plain append-only log,
+    not a table needing per-run bookkeeping fields.
+
+    Pass the full `scored` DataFrame for a first-run backfill (every
+    scoreable date), or just its last row (e.g. `scored.tail(1)`) for a
+    normal day's single append -- both go through the same shape here."""
+    return [
+        _to_native({
             "Symbol": record["Symbol"],
-            "Group": group,
             "Date": record["Date"],
             "TrendScore": record["TrendScore"],
             "MomentumAdj": record["MomentumAdj"],
@@ -211,9 +231,19 @@ def build_scores_history_rows(window: pd.DataFrame, group: str, snapshot_type: s
             "TrendRegime": record["TrendRegime"],
             "MomentumRegime": record["MomentumRegime"],
             "VolatilityRegime": record["VolatilityRegime"],
-            "SnapshotType": snapshot_type,
-        }))
-    return rows
+        })
+        for record in rows.to_dict("records")
+    ]
+
+
+def append_history_log(rows: list, path: Path) -> None:
+    """Appends one JSON object per line to history_log.jsonl. Deliberately
+    no dedupe against existing (Symbol, Date) lines -- an occasional
+    duplicate row from a same-day re-run is harmless for an audit log and
+    not worth the complexity of checking."""
+    with open(path, "a") as f:
+        for row in rows:
+            f.write(json.dumps(row) + "\n")
 
 
 def build_dashboard_json(scores_current_rows: list) -> dict:
@@ -245,25 +275,22 @@ def write_dashboard_json(data: dict, path: Path) -> None:
         json.dump(data, f, indent=2)
 
 
-def backfill_window(scored: pd.DataFrame, months: int) -> pd.DataFrame:
-    """Rows within the trailing `months` of the most recent scored date.
-    `scored` is already limited to fully-lookback dates by
-    scoring.score_series, so every row returned here is safe to
-    snapshot -- no date here was computed on a partial lookback window."""
-    dates = pd.to_datetime(scored["Date"])
-    cutoff = dates.max() - pd.DateOffset(months=months)
-    return scored[dates >= cutoff].reset_index(drop=True)
-
-
 def run(symbols_to_process: list, write: bool):
     config = airtable_client.get_config()
     print(f"Loaded {len(config)} config parameters from Airtable.")
 
     active_symbols = {s["Symbol"]: s for s in airtable_client.get_active_symbols()}
 
+    # Determined once, up front: history_log.jsonl doesn't exist yet only
+    # on the very first run ever (it's created at the end of this
+    # function, and future runs check out whatever was committed last
+    # time), so this correctly distinguishes "bootstrap with full
+    # history" from "just append today" for the whole run.
+    first_history_run = not HISTORY_LOG_PATH.exists()
+
     indicators_rows = []
     scores_current_rows = []
-    scores_history_rows = []
+    history_log_rows = []
     skipped = []
     errored = []
 
@@ -273,11 +300,9 @@ def run(symbols_to_process: list, write: bool):
             print(f"\n{symbol}: not found (or not Active) in the Symbols table -- skipping.")
             skipped.append(symbol)
             continue
-        # Scores_History.Group is still a plain-text field, so "" is a
-        # safe default there. Scores_Current.Group/Subgroup are
-        # single-select fields now -- pass None (not "") when missing,
-        # per build_scores_current_row's docstring.
-        group = symbol_info.get("Group") or ""
+        # Scores_Current.Group/Subgroup are single-select fields --
+        # pass None (not "") when missing, per build_scores_current_row's
+        # docstring.
         group_select = symbol_info.get("Group")
         subgroup_select = symbol_info.get("Subgroup")
         name = symbol_info.get("Name")
@@ -302,9 +327,9 @@ def run(symbols_to_process: list, write: bool):
         indicators_rows.append(build_indicators_row(latest))
         scores_current_rows.append(build_scores_current_row(scored, latest, name, group_select, subgroup_select))
 
-        window = backfill_window(scored, BACKFILL_MONTHS)
-        scores_history_rows.extend(build_scores_history_rows(window, group, "Backfill"))
-        print(f"  {len(scored)} scoreable dates total; backfilling {len(window)} snapshots "
+        history_log_rows.extend(build_history_log_rows(scored if first_history_run else scored.tail(1)))
+
+        print(f"  {len(scored)} scoreable dates total "
               f"(latest: {latest['Date']}, TechScore={latest['TechScore']}).")
 
     print("\n" + "=" * 60)
@@ -321,12 +346,8 @@ def run(symbols_to_process: list, write: bool):
           f"-> {[r['Symbol'] for r in indicators_rows]}")
     print(f"Scores_Current    : {len(scores_current_rows)} row(s), 1 per symbol "
           f"-> {[r['Symbol'] for r in scores_current_rows]}")
-    print(f"Scores_History    : {len(scores_history_rows)} row(s) total "
-          f"(SnapshotType=Backfill, upserted by Symbol+Date)")
-    for symbol in symbols_to_process:
-        count = sum(1 for r in scores_history_rows if r["Symbol"] == symbol)
-        if count:
-            print(f"  {symbol}: {count} snapshot rows")
+    print(f"{HISTORY_LOG_PATH.name} : {len(history_log_rows)} row(s) total "
+          f"({'initial backfill' if first_history_run else 'latest-day append'})")
 
     if not write:
         print("\nDry run only -- nothing written to Airtable. Re-run with --write to apply.")
@@ -336,8 +357,11 @@ def run(symbols_to_process: list, write: bool):
         print(f"  Indicators: wrote {len(indicators_rows)} row(s).")
         airtable_client.upsert_scores_current(scores_current_rows)
         print(f"  Scores_Current: wrote {len(scores_current_rows)} row(s).")
-        airtable_client.upsert_scores_history(scores_history_rows, symbols_to_process)
-        print(f"  Scores_History: wrote {len(scores_history_rows)} row(s).")
+
+        if history_log_rows:
+            append_history_log(history_log_rows, HISTORY_LOG_PATH)
+            print(f"  {HISTORY_LOG_PATH.name}: appended {len(history_log_rows)} row(s)"
+                  f"{' (initial backfill)' if first_history_run else ''}.")
 
         # Written only on a real --write run, not a dry run: this file
         # should always reflect the same "final" state that was just

@@ -18,11 +18,13 @@ GitHub Actions runner (Python pipeline: main.py + helper modules)
       │  merges raw data, computes derived values, scores, and regimes
       │
       ├──▶ writes to Airtable
-      │     (Config & Symbols are read-only inputs; Indicators,
-      │      Scores_Current, and Scores_History are written)
+      │     (Config & Symbols are read-only inputs; Indicators and
+      │      Scores_Current are written — current-state only, no
+      │      dated history)
       │
-      └──▶ writes dashboard_data.json into the repo, then the SAME
-            workflow run commits that file back to `main`
+      └──▶ writes dashboard_data.json AND appends to history_log.jsonl
+            in the repo, then the SAME workflow run commits both files
+            back to `main`
                   │
                   ▼
       GitHub Pages serves the repo's static files (index.html + dashboard_data.json)
@@ -31,10 +33,10 @@ GitHub Actions runner (Python pipeline: main.py + helper modules)
       Browser loads index.html, which fetches dashboard_data.json client-side
 ```
 
-**The core design principle: methodology lives in the script, Airtable stores and displays everything, and the public dashboard reads a static JSON snapshot — never Airtable directly.**
+**The core design principle: methodology lives in the script, Airtable stores and displays the current state, the dashboard reads a static JSON snapshot, and a plain repo file (`history_log.jsonl`) keeps the permanent day-by-day history — never Airtable directly.**
 
 - All scoring logic, thresholds-that-are-actually-tunable, and regime rules live in the Python files in this repo (`scoring.py` above all). Airtable is not a spreadsheet-with-formulas; it's a **record store and viewer**. This keeps the methodology in one traceable, version-controlled place instead of split between code and hidden Airtable formulas.
-- Airtable holds every input and every intermediate/derived value (see Section 3), so a human can inspect *why* a score came out the way it did without re-running anything.
+- Airtable holds every current input and derived value for the latest date per symbol (see Section 3), so a human can inspect *why* today's score came out the way it did without re-running anything. Dated history is **not** kept in Airtable — it's appended to `history_log.jsonl` in the repo instead (see Section 3 and Section 10), which is what keeps the Airtable base's own record count small.
 - The dashboard (`index.html`) never talks to Airtable and carries no Airtable token. It only ever fetches `dashboard_data.json`, a plain static file sitting next to it in the same GitHub Pages deployment. This is what makes it safe to make the repo (and therefore the dashboard) public — there is no credential-bearing code running in the browser.
 
 ---
@@ -45,15 +47,15 @@ GitHub Actions runner (Python pipeline: main.py + helper modules)
 |---|---|---|---|
 | **EODHD** | Market data API (EOD prices + technical indicators) | API key stored as a GitHub Actions secret (`EODHD_API_KEY`). Code comments in [config.py](config.py:43) document an assumed budget of **100,000 credits/day** and an assumed **~1,000 requests/minute** cap, with each *technical* endpoint call costing 5 credits (EOD price calls are not stated to cost extra). A full run pulls 1 EOD + 6 technical series per symbol × 113 symbols ≈ 800 requests/day, of which 6×113=678 are "technical" (5 credits each) ≈ **3,390 technical credits/day** — comfortably inside the assumed 100,000/day budget. | ⚠️ **Unverified** — the actual EODHD subscription tier and its monthly price aren't recorded anywhere in the repo or accessible to me. Confirm directly on your EODHD account dashboard. |
 | **GitHub** | Hosts the repo, runs the daily pipeline (Actions), serves the dashboard (Pages) | Repo `manpat2426/technical-dashboard` is confirmed **public**. Actions minutes and Pages hosting are free for public repositories. | **$0/month** (verified — public repo) |
-| **Airtable** | Stores Config/Symbols/Indicators/Scores_Current/Scores_History | Base `appummriRwPGUNjsj`, 5 tables. `Scores_History` alone currently holds **15,142 records** (verified live) and grows daily (see Section 10). | ⚠️ **Unverified** — I can't see billing/plan info through the Airtable API. A base with 15,000+ records in a single table is past Airtable's free-tier per-base record ceiling, so this account is very likely on a paid plan (Team/Business or similar) — confirm the exact tier and price on your Airtable account page. |
+| **Airtable** | Stores Config/Symbols/Indicators/Scores_Current | Base `appummriRwPGUNjsj`, **4 tables**, ~363 records total (verified live). The `Scores_History` table — which had grown to 15,142 records and was the sole reason this base exceeded the free tier — was deleted on 2026-07-27; history now lives in `history_log.jsonl` in the repo instead (see Section 3, Section 10). | ⚠️ **Action needed on your end** — the base's record count is now well under the free tier's 1,000/base limit, but I can't see or change your Airtable billing plan through the API. If you upgraded specifically because of Scores_History, confirm on your Airtable account/billing page that you can downgrade back to free now. |
 
-**Monthly cost tally:** GitHub $0 (confirmed). EODHD and Airtable costs need to be filled in from your own account billing pages — flagging rather than guessing.
+**Monthly cost tally:** GitHub $0 (confirmed). EODHD costs still need to be filled in from your own account billing page. Airtable should now be $0/month too, once you confirm the plan downgrade above — the record-count blocker that required a paid plan is gone.
 
 ---
 
-## 3. The Airtable Schema (verified live, 2026-07-26)
+## 3. The Airtable Schema (verified live, 2026-07-27)
 
-Base: `appummriRwPGUNjsj`. Five tables, exactly as `airtable_client.py` documents.
+Base: `appummriRwPGUNjsj`. **Four tables** (`Scores_History` was deleted on 2026-07-27 — see below and Section 10), exactly as `airtable_client.py` documents.
 
 ### Config
 *Control panel for every adjustable model parameter — periods, thresholds, tolerances.*
@@ -125,20 +127,14 @@ Currently **113 active symbols**: **75 Stocks**, **38 ETFs**, verified live.
 | MomentumRegime_1W / 2W / 3W / 1M | Single select | |
 | VolatilityRegime_1W / 2W / 3W / 1M | Single select | |
 
-### Scores_History
-*Dated snapshots of the full technical state, one row per symbol per date. Backfilled on first add, then appended every run. Powers the checkpoint columns above via nearest-prior-date retrieval.*
+### history_log.jsonl (repo file, not Airtable)
+*Dated snapshots of the full technical state, one line per symbol per date. This used to be the `Scores_History` Airtable table (schema above, for reference) but was moved to a plain repo file on 2026-07-27 to keep the Airtable base under its free-tier record limit — see Section 10 for the full reasoning.*
 
-| Field | Type | Notes |
-|---|---|---|
-| Symbol | Single line text | Primary field |
-| Group | Single line text | **Plain text here**, unlike Scores_Current's single-select Group — snapshot-time value, not a live-filterable field |
-| Date | Date | Snapshot date |
-| TrendScore, MomentumAdj, VolAdj, TechScore | Number | |
-| TrendRegime, MomentumRegime, VolatilityRegime | Single select | |
-| SnapshotType | Single select | e.g. `Backfill` |
-| Notes | Long text | Optional |
-
-Currently **15,142 records**, verified live (see Section 10 for growth implications).
+- **Location**: `history_log.jsonl` in the repo root, committed by the same GitHub Actions step that commits `dashboard_data.json` (see Section 6).
+- **Format**: one JSON object per line (JSONL, not a JSON array) — `{"Symbol": ..., "Date": ..., "TrendScore": ..., "MomentumAdj": ..., "VolAdj": ..., "TechScore": ..., "TrendRegime": ..., "MomentumRegime": ..., "VolatilityRegime": ...}`. Same score/regime fields the old Scores_History table held, minus `Group`/`SnapshotType`/`Notes` — this is a plain log, not a table needing per-run bookkeeping columns.
+- **Bootstrap-then-append**: the very first run ever (detected by the file not existing yet) writes every scoreable date across the full ~2-year EODHD pull, for every processed symbol — free to do, since that data is already computed in memory for the checkpoint calculations. Every run after that appends just the single latest date per symbol.
+- **No dedupe, by design**: unlike the old Airtable table (upserted by Symbol+Date), this is a plain append-only log — a same-day re-run appends a duplicate-looking (Symbol, same Date) line, and that's considered harmless for an audit log rather than worth the complexity of checking.
+- **Known limitation, also by design**: a symbol added to Symbols *after* the initial bootstrap won't retroactively get historical rows here — it only starts appearing from the day it's added onward. Acceptable because nothing in the live pipeline ever reads this file back (see Section 5) — it exists purely for ad-hoc historical analysis.
 
 ---
 
@@ -157,7 +153,7 @@ Two secrets, and they never live in code:
 
 The pipeline is five small modules plus an orchestrator, verified by reading each file directly.
 
-**`config.py`** — loads `.env`, fails loudly if secrets are missing, and defines structural constants: the Airtable base/table IDs, the two EODHD URL templates, the rate-limit pause (0.4s between EODHD calls), `TEST_MODE`/`TEST_SYMBOLS` (currently `TEST_MODE = False`, so a full run processes all active Symbols), `HISTORY_YEARS = 2`, and `BACKFILL_MONTHS = 6`. Model *parameters* (MA periods, thresholds) are deliberately **not** here — see Section 3's Config table.
+**`config.py`** — loads `.env`, fails loudly if secrets are missing, and defines structural constants: the Airtable base/table IDs, the two EODHD URL templates, the rate-limit pause (0.4s between EODHD calls), `TEST_MODE`/`TEST_SYMBOLS` (currently `TEST_MODE = False`, so a full run processes all active Symbols), and `HISTORY_YEARS = 2` (how much EODHD history to pull per symbol — comfortably exceeds the 3-month max checkpoint lookback plus the longest indicator lookback, e.g. BBW_Percentile's 125-period window). Model *parameters* (MA periods, thresholds) are deliberately **not** here — see Section 3's Config table.
 
 **`eodhd_client.py`** — thin HTTP wrapper. `get_eod(symbol)` pulls ~2 years of daily prices, using EODHD's `adjusted_close` field (**split- and dividend-adjusted**, not raw close). `get_technical(symbol, function, period)` pulls one technical series at a time (`sma`, `atr`, `rsi`, `bbands`, `macd`), also computed by EODHD on adjusted data. Reuses one `requests.Session()` across all calls — the file's own comment notes this cuts the dominant cost of a full run (TCP/TLS handshake overhead) from ~1.1–1.3s to ~0.1–0.25s per request.
 
@@ -168,12 +164,12 @@ The pipeline is five small modules plus an orchestrator, verified by reading eac
 2. `score_row()` computes Price60/Price120, MAAlign, the Trend/Momentum/Volatility scores and regimes, and the final `TechScore` for one date, reading thresholds from `config`.
 3. `score_series()` runs `score_row()` across every date that has a complete lookback (drops early dates lacking enough history for MA120/ATR90Avg/BBW's 125-day window).
 
-**`airtable_client.py`** — all Airtable I/O, via the raw REST API (no SDK dependency). Config and Symbols are read-only. Indicators and Scores_Current are **replaced in place, one row per symbol** on every run. Scores_History is **upserted keyed by (Symbol, Date)** — re-running or re-backfilling never creates duplicate snapshot rows. `typecast=False` on every write, on purpose: a rejected write means a genuine mismatch (e.g. a regime string that doesn't match an existing single-select option) worth seeing, not something to silently paper over.
+**`airtable_client.py`** — all Airtable I/O, via the raw REST API (no SDK dependency). Config and Symbols are read-only. Indicators and Scores_Current are **replaced in place, one row per symbol** on every run — Airtable now holds only current-state data, no dated history (see Section 3's `history_log.jsonl` entry for where that went). `typecast=False` on every write, on purpose: a rejected write means a genuine mismatch (e.g. a regime string that doesn't match an existing single-select option) worth seeing, not something to silently paper over.
 
-**`main.py`** — orchestrates the above per symbol: pull → score → build the three Airtable row shapes → (if `--write`) upsert to Airtable → generate `dashboard_data.json`. Two things worth calling out:
-- **Backfill-then-append history logic**: on every run, `backfill_window()` takes the trailing `BACKFILL_MONTHS` (6) of already-scored dates and upserts all of them to Scores_History, tagged `SnapshotType=Backfill`. Because writes are keyed by (Symbol, Date), this is safe to run daily — a brand-new symbol gets ~6 months of history populated immediately (so its checkpoint columns aren't blank for months), and an existing symbol just re-upserts the same recent window (a no-op for already-written dates, a genuine append for the new date).
-- **Dry-run safety gate**: `python main.py` alone only computes and prints a summary — it never touches Airtable. You must pass `--write` to actually perform writes. The daily GitHub Actions workflow always passes `--write`.
-- `dashboard_data.json` is written **only** on a real `--write` run, and only after the Airtable writes succeed, so it's guaranteed to reflect the same state just pushed to Airtable — never a locally-computed-but-unwritten state.
+**`main.py`** — orchestrates the above per symbol: pull → score → build the Indicators/Scores_Current row shapes (and the history-log rows) → (if `--write`) upsert Indicators/Scores_Current to Airtable, append to `history_log.jsonl`, and generate `dashboard_data.json`. Two things worth calling out:
+- **History-log bootstrap-then-append logic**: `history_log.jsonl` (repo root, not Airtable — see Section 3) is governed by one simple rule: if the file doesn't exist yet, the very first run writes every scoreable date across the full ~2-year EODHD pull for every processed symbol (free to do, since that data is already computed in memory for the checkpoint calculations); every run after that just appends the single latest date per symbol. It's a plain append-only log — no dedupe against existing (Symbol, Date) lines, so an occasional duplicate line from a same-day re-run is possible and considered harmless. **Known limitation, by design**: a symbol added to Symbols *after* the initial bootstrap won't retroactively get historical rows in this file — a deliberate simplicity tradeoff, acceptable because nothing in the live pipeline ever reads this file back.
+- **Dry-run safety gate**: `python main.py` alone only computes and prints a summary — it never touches Airtable or the history log. You must pass `--write` to actually perform writes. The daily GitHub Actions workflow always passes `--write`.
+- `dashboard_data.json` is written **only** on a real `--write` run, and only after the Airtable writes succeed, so it's guaranteed to reflect the same state just pushed to Airtable — never a locally-computed-but-unwritten state. `history_log.jsonl` is appended under the same `--write` gate.
 
 **Not part of the daily pipeline** (each file says so in its own docstring): `smoke_test.py`, `scoring_check.py`, `checkpoint_check.py`, `momentum_check.py`. These are manual debugging scripts kept around for future troubleshooting (EODHD connectivity, score sanity-checking, checkpoint retrieval, and Improving/Deteriorating firing-rate checks, respectively). They're safe to ignore for normal operation.
 
@@ -186,7 +182,7 @@ Verified from [.github/workflows/daily-run.yml](.github/workflows/daily-run.yml)
 - **Cron**: `11 0 * * *` → **00:11 UTC**, every day. That's **7:11 PM EST** (winter) or **8:11 PM EDT** (summer) — roughly 3–4 hours after the 4:00 PM ET market close.
 - **Why :11 and not the top of the hour**: the workflow's own comment explains that exact-hour-boundary schedules (`0 2 * * *`, etc.) were empirically observed to queue behind heavy GitHub Actions contention and run 6–10 hours late; offsetting to minute 11 was the fix attempted.
 - **`workflow_dispatch`** is also enabled, so the pipeline can be triggered manually from the Actions tab (used for the ad-hoc verification run captured below).
-- **The commit-back step**: after `python main.py --write` runs, a second step configures a `github-actions[bot]` git identity, checks whether `dashboard_data.json` actually changed (`git diff --quiet`), and if so commits it with `[skip ci]` (so the commit doesn't re-trigger anything) and pushes to `main` — with one `pull --rebase` + retry if the push is rejected by a same-minute race. This step runs `if: always()`, so even a partially-failed pipeline run (some symbols errored) still commits whatever data was successfully written.
+- **The commit-back step**: after `python main.py --write` runs, a second step configures a `github-actions[bot]` git identity, checks whether `dashboard_data.json` and/or `history_log.jsonl` actually changed (`git status --porcelain` on both paths — `git status`, not `git diff`, because `history_log.jsonl` doesn't exist as a tracked file at all until its first-ever run creates it), and if so commits both with `[skip ci]` (so the commit doesn't re-trigger anything) and pushes to `main` — with one `pull --rebase` + retry if the push is rejected by a same-minute race. This step runs `if: always()`, so even a partially-failed pipeline run (some symbols errored) still commits whatever data was successfully written.
 - **Alerting**: there's no custom notification system (no Slack webhook, no email step). The only alerting is **GitHub's own default behavior of emailing the repo owner when a scheduled workflow run fails** — this depends on your GitHub notification settings being at their defaults; it isn't something this repo configures or that I can verify from here.
 
 ---
@@ -202,7 +198,7 @@ Verified from [.github/workflows/daily-run.yml](.github/workflows/daily-run.yml)
 
 ## 8. Troubleshooting / Known Issues
 
-- **Weekends / non-trading days**: the script runs on the same daily cron regardless of whether the market was open. EODHD simply returns data through the last actual trading day, so "latest" just resolves to Friday's close on a Saturday/Sunday run. Because Scores_History writes are keyed by (Symbol, Date), a run on a non-trading day doesn't create a duplicate or garbage row — it just re-upserts the same most-recent date, a no-op.
+- **Weekends / non-trading days**: the script runs on the same daily cron regardless of whether the market was open. EODHD simply returns data through the last actual trading day, so "latest" just resolves to Friday's close on a Saturday/Sunday run — Indicators/Scores_Current are simply rewritten with the same values (harmless, since they're replaced-in-place, not appended). `history_log.jsonl`, however, has no dedupe (see Section 5) — a run that doesn't advance to a new trading day appends a duplicate-looking (Symbol, same Date) line. This is expected and harmless for an audit log, just worth knowing if you're ever using line-count-per-symbol as a proxy for trading days.
 - **Winter (EST) timing margin is thin**: the workflow comment is explicit about this — 00:11 UTC is only ~11 minutes past the "7:00 PM ET floor" it was originally targeting, in winter. If EODHD's post-close data update ever lags on a given day, this schedule has very little cushion. (In summer/EDT there's an extra hour of margin.)
 - **GitHub Actions scheduled-run timing variability — confirmed, and currently worse than the workflow's own comment anticipates.** I pulled the actual run history (`gh run list`) rather than assuming the cron fires on time:
 
@@ -227,9 +223,9 @@ Verified from [.github/workflows/daily-run.yml](.github/workflows/daily-run.yml)
 
 ## 9. Maintenance & Operations
 
-**Adding a security**: add a row to Symbols with the correct EODHD-format `Symbol`, a `Name`, a `Group`, optionally a `Subgroup`, and check `Active`. The next scheduled (or manually dispatched) run will pick it up automatically via `get_active_symbols()`, pull `HISTORY_YEARS` (2 years) of history, score it, and — because of the backfill logic in `main.py` — immediately populate ~6 months of Scores_History snapshots, so its checkpoint columns aren't blank while you wait for weeks of new data to accumulate.
+**Adding a security**: add a row to Symbols with the correct EODHD-format `Symbol`, a `Name`, a `Group`, optionally a `Subgroup`, and check `Active`. The next scheduled (or manually dispatched) run will pick it up automatically via `get_active_symbols()`, pull `HISTORY_YEARS` (2 years) of history, score it, and populate its Scores_Current checkpoint columns immediately — they're computed in-memory from that same 2-year pull, not from any accumulated snapshot history, so there's no waiting period (see Section 5). Note: it will **not** retroactively appear in past `history_log.jsonl` entries — per Section 3's noted limitation, it only starts showing up there from the day it's added onward.
 
-**Removing a security**: uncheck `Active` in Symbols rather than deleting the row — `get_active_symbols()` filters on `Active`, so an inactive symbol simply stops being processed (its existing Indicators/Scores_Current/Scores_History rows are left alone, not deleted).
+**Removing a security**: uncheck `Active` in Symbols rather than deleting the row — `get_active_symbols()` filters on `Active`, so an inactive symbol simply stops being processed (its existing Indicators/Scores_Current rows are left alone, not deleted, and it simply stops appearing in future `history_log.jsonl` appends).
 
 **New Subgroups — correction to a common assumption**: the dashboard's Group+Subgroup filter buttons are **not hardcoded**. `index.html`'s `buildFilters()` derives the full list of combo buttons dynamically from whatever `Group`/`Subgroup` pairs actually appear in `dashboard_data.json` at load time ([index.html:554-577](index.html:554)). So adding a **new Subgroup** under an existing Group (e.g., a new sector) needs **no dashboard code change at all** — it appears automatically after the next run. The only two filter buttons that *are* hardcoded are the top-level "Stocks" and "ETFs" buttons (tied to the literal string values of `Group`); a genuinely new top-level Group (a third one, beyond Stocks/ETFs) would need a small `index.html` edit to add its button.
 
@@ -243,7 +239,7 @@ Verified from [.github/workflows/daily-run.yml](.github/workflows/daily-run.yml)
 
 ## 10. Limitations & Future Enhancements
 
-- **Scores_History row growth**: **15,142 rows today** (verified live), growing by up to 113 rows per trading day (one per active symbol, upserted so no duplicate growth on non-trading days). At roughly 252 US trading days/year, that's on the order of **~28,000 new rows/year** at the current universe size. Airtable's per-base record ceilings vary by plan (free tiers are in the low thousands; paid tiers scale into the tens or hundreds of thousands) — worth periodically checking this table's size against whatever plan you're actually on (see Section 2's flagged cost item), and considering an archival/pruning strategy for old `Backfill`-tagged rows if it ever approaches a ceiling.
+- **Resolved: Scores_History was removed from Airtable entirely on 2026-07-27.** It had grown to 15,142 rows and was the sole reason the base needed a paid Airtable plan (the other four tables total only ~363 records, comfortably under the free 1,000/base limit). History now lives in `history_log.jsonl` in the repo instead (see Section 3). That file has no comparable ceiling to manage — git repo size, not Airtable records, is the only long-run constraint, and at ~113 lines/trading-day (~28,000/year) that's a few MB/year of plain text, not a practical concern for the foreseeable future.
 - **Considered but not built: a daily success confirmation.** Right now the only email signal is a *failure* email from GitHub's defaults; there's no positive "yes, it ran and wrote 113 rows" ping. A silent success and GitHub Actions simply not firing can currently look identical from your inbox. A small addition (e.g., a final workflow step that pings a webhook or sends a one-line success email) has been discussed as a future enhancement but isn't implemented.
 - **No automated tests**: the four `*_check.py` scripts are manual/eyeball debugging aids, not an automated test suite — there's no CI step that runs them or asserts on their output.
 - **The "~17% of days" Improving/Deteriorating firing-rate figure in METHODOLOGY.md §6 could not be verified** from the code alone — see the discrepancy note below.
