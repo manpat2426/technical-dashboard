@@ -22,6 +22,8 @@ module), to keep the Airtable base under its free-tier record limit.
 See main.py's module docstring for the full reasoning.
 """
 
+import time
+
 import requests
 
 from config import (
@@ -44,8 +46,40 @@ _session = requests.Session()
 # Airtable's create/update endpoints accept at most 10 records per request.
 BATCH_SIZE = 10
 
+# Bounded retry+backoff for transient Airtable API failures. A single
+# 30s read-timeout or a brief 429/5xx used to kill the whole daily run
+# (observed 2026-08-02); these let it self-heal instead.
+_MAX_ATTEMPTS = 4
+_RETRY_5XX = {500, 502, 503, 504}
+
 
 # --- Low-level helpers ---
+
+def _request(method: str, url: str, *, idempotent: bool, **kwargs) -> requests.Response:
+    """One Airtable request with bounded exponential-backoff retry on
+    transient failures. Retries on connection errors and HTTP 429 for any
+    method; also retries read-timeouts and 5xx when `idempotent` is True
+    (safe for GET reads). Writes (idempotent=False) do NOT retry on a
+    read-timeout or 5xx, since the write may actually have applied and a
+    blind retry could duplicate a row. Non-retryable responses (e.g. 422)
+    are returned as-is for the caller to handle."""
+    kwargs.setdefault("timeout", 30)
+    for attempt in range(_MAX_ATTEMPTS):
+        last = attempt == _MAX_ATTEMPTS - 1
+        try:
+            response = _session.request(method, url, headers=_HEADERS, **kwargs)
+        except requests.exceptions.ConnectionError:
+            if last:
+                raise
+        except requests.exceptions.Timeout:
+            if last or not idempotent:
+                raise
+        else:
+            retryable = response.status_code == 429 or (idempotent and response.status_code in _RETRY_5XX)
+            if not retryable or last:
+                return response
+        time.sleep(min(2 ** attempt, 8))  # 1s, 2s, 4s
+
 
 def _list_all_records(table_id: str, params: dict = None) -> list:
     """Fetch every record matching `params`, following Airtable's cursor
@@ -54,7 +88,7 @@ def _list_all_records(table_id: str, params: dict = None) -> list:
     records = []
     query = dict(params or {})
     while True:
-        response = _session.get(url, headers=_HEADERS, params=query, timeout=30)
+        response = _request("GET", url, idempotent=True, params=query)
         if response.status_code != 200:
             raise RuntimeError(
                 f"Airtable list failed ({response.status_code}) for {table_id}: {response.text[:300]}"
@@ -82,7 +116,7 @@ def _batch_create(table_id: str, field_rows: list, typecast: bool = False) -> No
     for i in range(0, len(field_rows), BATCH_SIZE):
         chunk = field_rows[i:i + BATCH_SIZE]
         payload = {"records": [{"fields": fields} for fields in chunk], "typecast": typecast}
-        response = _session.post(url, headers=_HEADERS, json=payload, timeout=30)
+        response = _request("POST", url, idempotent=False, json=payload)
         if response.status_code != 200:
             raise RuntimeError(
                 f"Airtable create failed ({response.status_code}) for {table_id}: {response.text[:300]}"
@@ -99,7 +133,7 @@ def _batch_update(table_id: str, id_field_pairs: list, typecast: bool = False) -
             "records": [{"id": record_id, "fields": fields} for record_id, fields in chunk],
             "typecast": typecast,
         }
-        response = _session.patch(url, headers=_HEADERS, json=payload, timeout=30)
+        response = _request("PATCH", url, idempotent=False, json=payload)
         if response.status_code != 200:
             raise RuntimeError(
                 f"Airtable update failed ({response.status_code}) for {table_id}: {response.text[:300]}"

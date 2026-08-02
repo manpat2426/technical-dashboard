@@ -1,17 +1,13 @@
 name: Daily Technical Dashboard Run
 
+# Triggered ONLY by workflow_dispatch, not GitHub's own `schedule:` cron.
+# GitHub's scheduled runs were empirically landing 7.5-12.5 hours late
+# (deprioritized queue), so the daily trigger was moved to an external
+# scheduler (a Make.com scenario) that calls this workflow's dispatch API
+# at a fixed local time -- dispatched runs start immediately instead of
+# queueing. See DEPLOYMENT.md Section 6. workflow_dispatch also still
+# allows manual runs from the Actions tab / `gh workflow run`.
 on:
-  schedule:
-    # 00:11 UTC = 7:11 PM EST / 8:11 PM EDT -- roughly 3-4 hours after the
-    # 4:00 PM ET market close, year-round. Deliberately off the top of the
-    # hour (minute 11, not 0) since GitHub documents -- and we confirmed
-    # empirically, runs were landing 6-10 hours late at "0 2 * * *" -- that
-    # exact-hour-boundary schedules queue behind heavy contention. Note:
-    # this is a tighter margin than the previous 02:00 UTC schedule,
-    # especially in winter (EST) where it's only ~11 minutes past the
-    # 7:00 PM ET floor we originally targeted; if EODHD's post-close
-    # update ever lags, push this later.
-    - cron: "11 0 * * *"
   workflow_dispatch: {}
 
 # GITHUB_TOKEN defaults to read-only contents access on many repos;
