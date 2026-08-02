@@ -10,7 +10,10 @@ columns are ever renamed, this file (and only this file) needs updating.
 Write strategy per table:
   - Config, Symbols: read-only from this script's perspective.
   - Indicators, Scores_Current: one row per symbol, replaced in place
-    each run (upsert keyed by Symbol).
+    each run (upsert keyed by Symbol). Scores_Current is written with
+    typecast=True so a brand-new Group/Subgroup added in the Symbols
+    table auto-creates the matching option instead of failing the run;
+    Indicators (no single-selects) stays strict.
 
 Dated history is intentionally not written here -- it used to be an
 Airtable table (Scores_History) but is now appended to history_log.jsonl
@@ -65,16 +68,20 @@ def _list_all_records(table_id: str, params: dict = None) -> list:
     return records
 
 
-def _batch_create(table_id: str, field_rows: list) -> None:
+def _batch_create(table_id: str, field_rows: list, typecast: bool = False) -> None:
     """Create records, chunked to Airtable's 10-per-request limit.
-    typecast=False on purpose: every singleSelect option this pipeline
-    writes (regimes) already exists in the base, so a rejected write here
-    means a real mismatch worth seeing, not something to silently paper
-    over by auto-creating a new option."""
+
+    typecast defaults to False, so a rejected write means a real mismatch
+    worth seeing rather than something silently papered over. Scores_Current
+    passes typecast=True (see upsert_scores_current) so that a brand-new
+    Group/Subgroup created in the Symbols table auto-creates the matching
+    single-select option here instead of failing the whole run -- the
+    regimes written in that same payload still come only from scoring.py's
+    fixed vocabulary, so nothing unexpected gets created."""
     url = AIRTABLE_API_URL.format(base_id=AIRTABLE_BASE_ID, table_id=table_id)
     for i in range(0, len(field_rows), BATCH_SIZE):
         chunk = field_rows[i:i + BATCH_SIZE]
-        payload = {"records": [{"fields": fields} for fields in chunk], "typecast": False}
+        payload = {"records": [{"fields": fields} for fields in chunk], "typecast": typecast}
         response = _session.post(url, headers=_HEADERS, json=payload, timeout=30)
         if response.status_code != 200:
             raise RuntimeError(
@@ -82,14 +89,15 @@ def _batch_create(table_id: str, field_rows: list) -> None:
             )
 
 
-def _batch_update(table_id: str, id_field_pairs: list) -> None:
-    """Update existing records by record id, chunked to 10 per request."""
+def _batch_update(table_id: str, id_field_pairs: list, typecast: bool = False) -> None:
+    """Update existing records by record id, chunked to 10 per request.
+    See _batch_create for the meaning of typecast."""
     url = AIRTABLE_API_URL.format(base_id=AIRTABLE_BASE_ID, table_id=table_id)
     for i in range(0, len(id_field_pairs), BATCH_SIZE):
         chunk = id_field_pairs[i:i + BATCH_SIZE]
         payload = {
             "records": [{"id": record_id, "fields": fields} for record_id, fields in chunk],
-            "typecast": False,
+            "typecast": typecast,
         }
         response = _session.patch(url, headers=_HEADERS, json=payload, timeout=30)
         if response.status_code != 200:
@@ -98,10 +106,11 @@ def _batch_update(table_id: str, id_field_pairs: list) -> None:
             )
 
 
-def _upsert_by_key(table_id: str, rows: list, existing_by_key: dict, key_fn) -> None:
+def _upsert_by_key(table_id: str, rows: list, existing_by_key: dict, key_fn, typecast: bool = False) -> None:
     """Shared upsert logic: split `rows` into creates vs. updates based on
     whether key_fn(row) is already present in existing_by_key (key ->
-    record id), then write both batches."""
+    record id), then write both batches. `typecast` is passed through to
+    both (see _batch_create)."""
     to_create, to_update = [], []
     for row in rows:
         record_id = existing_by_key.get(key_fn(row))
@@ -111,9 +120,9 @@ def _upsert_by_key(table_id: str, rows: list, existing_by_key: dict, key_fn) -> 
             to_create.append(row)
 
     if to_create:
-        _batch_create(table_id, to_create)
+        _batch_create(table_id, to_create, typecast=typecast)
     if to_update:
-        _batch_update(table_id, to_update)
+        _batch_update(table_id, to_update, typecast=typecast)
 
 
 # --- Config table (read-only) ---
@@ -172,9 +181,16 @@ def upsert_indicators(rows: list) -> None:
 
 def upsert_scores_current(rows: list) -> None:
     """rows: list of dicts with Airtable field names as keys, one per
-    symbol. Replaces each symbol's existing row in place."""
+    symbol. Replaces each symbol's existing row in place.
+
+    typecast=True so that a Group/Subgroup value newly created in the
+    Symbols table (which this table inherits) auto-creates the matching
+    single-select option here, instead of the whole run failing with a
+    422 the first time a new category is added. This keeps "just add the
+    security in Symbols" working with no schema step -- see DEPLOYMENT.md."""
     existing = _list_all_records(TABLE_SCORES_CURRENT, {"fields[]": ["Symbol"]})
     existing_by_symbol = {
         r["fields"]["Symbol"]: r["id"] for r in existing if r["fields"].get("Symbol")
     }
-    _upsert_by_key(TABLE_SCORES_CURRENT, rows, existing_by_symbol, key_fn=lambda row: row["Symbol"])
+    _upsert_by_key(TABLE_SCORES_CURRENT, rows, existing_by_symbol,
+                   key_fn=lambda row: row["Symbol"], typecast=True)
