@@ -275,11 +275,17 @@ def write_dashboard_json(data: dict, path: Path) -> None:
         json.dump(data, f, indent=2)
 
 
-def run(symbols_to_process: list, write: bool):
+def run(write: bool, only_symbols: list = None):
     config = airtable_client.get_config()
     print(f"Loaded {len(config)} config parameters from Airtable.")
 
+    # Fetched exactly once per run (this used to be read a second time in
+    # __main__ just to build the ticker list -- an extra Airtable list
+    # call every run for no reason). `only_symbols` is the TEST_MODE
+    # subset; when None we process the whole active universe.
     active_symbols = {s["Symbol"]: s for s in airtable_client.get_active_symbols()}
+    symbols_to_process = only_symbols if only_symbols is not None else list(active_symbols.keys())
+    print(f"TEST_MODE={TEST_MODE} -- processing {len(symbols_to_process)} symbol(s): {symbols_to_process}")
 
     # Determined once, up front: history_log.jsonl doesn't exist yet only
     # on the very first run ever (it's created at the end of this
@@ -388,7 +394,6 @@ if __name__ == "__main__":
     parser.add_argument("--write", action="store_true", help="Actually write to Airtable (default: dry run).")
     args = parser.parse_args()
 
-    symbols = TEST_SYMBOLS if TEST_MODE else [s["Symbol"] for s in airtable_client.get_active_symbols()]
-    print(f"TEST_MODE={TEST_MODE} -- processing {len(symbols)} symbol(s): {symbols}")
-
-    run(symbols, write=args.write)
+    # In TEST_MODE, restrict to TEST_SYMBOLS; otherwise run() processes the
+    # whole active universe from its single get_active_symbols() fetch.
+    run(write=args.write, only_symbols=TEST_SYMBOLS if TEST_MODE else None)

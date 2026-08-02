@@ -9,11 +9,13 @@ columns are ever renamed, this file (and only this file) needs updating.
 
 Write strategy per table:
   - Config, Symbols: read-only from this script's perspective.
-  - Indicators, Scores_Current: one row per symbol, replaced in place
-    each run (upsert keyed by Symbol). Scores_Current is written with
-    typecast=True so a brand-new Group/Subgroup added in the Symbols
-    table auto-creates the matching option instead of failing the run;
-    Indicators (no single-selects) stays strict.
+  - Indicators, Scores_Current: one row per symbol, written each run via
+    Airtable's server-side upsert (performUpsert) keyed on Symbol -- no
+    separate "list existing rows" call needed, which keeps the per-run
+    Airtable API-call count down (matters on the free-tier monthly cap).
+    Scores_Current is upserted with typecast=True so a brand-new Group/
+    Subgroup added in the Symbols table auto-creates the matching option
+    instead of failing the run; Indicators (no single-selects) stays strict.
 
 Dated history is intentionally not written here -- it used to be an
 Airtable table (Scores_History) but is now appended to history_log.jsonl
@@ -102,61 +104,36 @@ def _list_all_records(table_id: str, params: dict = None) -> list:
     return records
 
 
-def _batch_create(table_id: str, field_rows: list, typecast: bool = False) -> None:
-    """Create records, chunked to Airtable's 10-per-request limit.
+def _batch_upsert(table_id: str, rows: list, merge_field: str, typecast: bool = False) -> None:
+    """Create-or-update every row in one pass using Airtable's server-side
+    upsert (performUpsert), matched on `merge_field` (e.g. "Symbol").
 
-    typecast defaults to False, so a rejected write means a real mismatch
-    worth seeing rather than something silently papered over. Scores_Current
-    passes typecast=True (see upsert_scores_current) so that a brand-new
-    Group/Subgroup created in the Symbols table auto-creates the matching
-    single-select option here instead of failing the whole run -- the
-    regimes written in that same payload still come only from scoring.py's
-    fixed vocabulary, so nothing unexpected gets created."""
+    This replaces the old "list every existing row to map Symbol->record
+    id, then split into create vs update" approach -- Airtable now does the
+    match inside the write itself, so each upsert costs one fewer full
+    "list all records" API call per table per run. It also makes the write
+    idempotent: a retried request re-matches the same row instead of
+    duplicating it (so these calls are safe to mark idempotent for retry).
+
+    Chunked to Airtable's 10-records/request limit. typecast defaults to
+    False so a rejected write surfaces a real mismatch; Scores_Current
+    passes typecast=True so a brand-new Group/Subgroup value auto-creates
+    its single-select option instead of failing the run (the regimes in
+    that same payload still come only from scoring.py's fixed vocabulary,
+    so nothing unexpected gets created)."""
     url = AIRTABLE_API_URL.format(base_id=AIRTABLE_BASE_ID, table_id=table_id)
-    for i in range(0, len(field_rows), BATCH_SIZE):
-        chunk = field_rows[i:i + BATCH_SIZE]
-        payload = {"records": [{"fields": fields} for fields in chunk], "typecast": typecast}
-        response = _request("POST", url, idempotent=False, json=payload)
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"Airtable create failed ({response.status_code}) for {table_id}: {response.text[:300]}"
-            )
-
-
-def _batch_update(table_id: str, id_field_pairs: list, typecast: bool = False) -> None:
-    """Update existing records by record id, chunked to 10 per request.
-    See _batch_create for the meaning of typecast."""
-    url = AIRTABLE_API_URL.format(base_id=AIRTABLE_BASE_ID, table_id=table_id)
-    for i in range(0, len(id_field_pairs), BATCH_SIZE):
-        chunk = id_field_pairs[i:i + BATCH_SIZE]
+    for i in range(0, len(rows), BATCH_SIZE):
+        chunk = rows[i:i + BATCH_SIZE]
         payload = {
-            "records": [{"id": record_id, "fields": fields} for record_id, fields in chunk],
+            "performUpsert": {"fieldsToMergeOn": [merge_field]},
+            "records": [{"fields": fields} for fields in chunk],
             "typecast": typecast,
         }
-        response = _request("PATCH", url, idempotent=False, json=payload)
+        response = _request("PATCH", url, idempotent=True, json=payload)
         if response.status_code != 200:
             raise RuntimeError(
-                f"Airtable update failed ({response.status_code}) for {table_id}: {response.text[:300]}"
+                f"Airtable upsert failed ({response.status_code}) for {table_id}: {response.text[:300]}"
             )
-
-
-def _upsert_by_key(table_id: str, rows: list, existing_by_key: dict, key_fn, typecast: bool = False) -> None:
-    """Shared upsert logic: split `rows` into creates vs. updates based on
-    whether key_fn(row) is already present in existing_by_key (key ->
-    record id), then write both batches. `typecast` is passed through to
-    both (see _batch_create)."""
-    to_create, to_update = [], []
-    for row in rows:
-        record_id = existing_by_key.get(key_fn(row))
-        if record_id:
-            to_update.append((record_id, row))
-        else:
-            to_create.append(row)
-
-    if to_create:
-        _batch_create(table_id, to_create, typecast=typecast)
-    if to_update:
-        _batch_update(table_id, to_update, typecast=typecast)
 
 
 # --- Config table (read-only) ---
@@ -204,11 +181,7 @@ def upsert_indicators(rows: list) -> None:
     MACD, MACD_Signal, RSI14, ROC20). Replaces each symbol's existing row
     in place; Indicators holds only the latest pull per symbol, not a
     growing dated history."""
-    existing = _list_all_records(TABLE_INDICATORS, {"fields[]": ["Symbol"]})
-    existing_by_symbol = {
-        r["fields"]["Symbol"]: r["id"] for r in existing if r["fields"].get("Symbol")
-    }
-    _upsert_by_key(TABLE_INDICATORS, rows, existing_by_symbol, key_fn=lambda row: row["Symbol"])
+    _batch_upsert(TABLE_INDICATORS, rows, merge_field="Symbol")
 
 
 # --- Scores_Current (latest row per symbol, replaced each run) ---
@@ -222,9 +195,4 @@ def upsert_scores_current(rows: list) -> None:
     single-select option here, instead of the whole run failing with a
     422 the first time a new category is added. This keeps "just add the
     security in Symbols" working with no schema step -- see DEPLOYMENT.md."""
-    existing = _list_all_records(TABLE_SCORES_CURRENT, {"fields[]": ["Symbol"]})
-    existing_by_symbol = {
-        r["fields"]["Symbol"]: r["id"] for r in existing if r["fields"].get("Symbol")
-    }
-    _upsert_by_key(TABLE_SCORES_CURRENT, rows, existing_by_symbol,
-                   key_fn=lambda row: row["Symbol"], typecast=True)
+    _batch_upsert(TABLE_SCORES_CURRENT, rows, merge_field="Symbol", typecast=True)
