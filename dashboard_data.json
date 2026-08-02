@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-08-01T20:50:24.575277+00:00",
+  "last_updated": "2026-08-02T18:08:50.612128+00:00",
   "symbols": [
     {
       "Symbol": "HD.US",
@@ -59,7 +59,7 @@
     },
     {
       "Symbol": "TLT.US",
-      "Name": "iShares 20+ Treasury",
+      "Name": "20+ Treasury",
       "Group": "ETFs",
       "Subgroup": "Fixed Income",
       "TechScore": -3,
@@ -115,7 +115,7 @@
     },
     {
       "Symbol": "AOM.US",
-      "Name": "iShares Core 40/60",
+      "Name": "Core 40/60",
       "Group": "ETFs",
       "Subgroup": "Allocation",
       "TechScore": -1,
@@ -199,7 +199,7 @@
     },
     {
       "Symbol": "XLU.US",
-      "Name": "SS Utilities",
+      "Name": "Utilities",
       "Group": "ETFs",
       "Subgroup": "Sector",
       "TechScore": -3,
@@ -280,6 +280,34 @@
       "VolatilityRegime_2W": "Orderly",
       "VolatilityRegime_3W": "Expanding",
       "VolatilityRegime_1M": "Expanding"
+    },
+    {
+      "Symbol": "ETHA.US",
+      "Name": "Ethereum",
+      "Group": "ETFs",
+      "Subgroup": "Alternatives",
+      "TechScore": 2,
+      "TechScore_1W": 1,
+      "TechScore_2W": -3,
+      "TechScore_3W": -3,
+      "TechScore_1M": -5,
+      "TechScore_2M": -8,
+      "TechScore_3M": 2,
+      "TrendRegime": "Downtrend",
+      "MomentumRegime": "Bullish",
+      "VolatilityRegime": "Compressed / Squeeze",
+      "TrendRegime_1W": "Downtrend",
+      "TrendRegime_2W": "Strong Downtrend",
+      "TrendRegime_3W": "Strong Downtrend",
+      "TrendRegime_1M": "Strong Downtrend",
+      "MomentumRegime_1W": "Bullish",
+      "MomentumRegime_2W": "Bullish",
+      "MomentumRegime_3W": "Bullish",
+      "MomentumRegime_1M": "Neutral",
+      "VolatilityRegime_1W": "Orderly",
+      "VolatilityRegime_2W": "Orderly",
+      "VolatilityRegime_3W": "Orderly",
+      "VolatilityRegime_1M": "Orderly"
     },
     {
       "Symbol": "NEM.US",
@@ -423,7 +451,7 @@
     },
     {
       "Symbol": "VTV.US",
-      "Name": "VG Value",
+      "Name": "US Value",
       "Group": "ETFs",
       "Subgroup": "Equity",
       "TechScore": 3,
@@ -619,7 +647,7 @@
     },
     {
       "Symbol": "XLI.US",
-      "Name": "SS Industrials",
+      "Name": "Industrials",
       "Group": "ETFs",
       "Subgroup": "Sector",
       "TechScore": 1,
@@ -647,7 +675,7 @@
     },
     {
       "Symbol": "VNQ.US",
-      "Name": "VG Real Estate",
+      "Name": "Real Estate",
       "Group": "ETFs",
       "Subgroup": "Sector",
       "TechScore": 2,
@@ -787,7 +815,7 @@
     },
     {
       "Symbol": "VNQI.US",
-      "Name": "VG Intl Real Estate",
+      "Name": "Intl Real Estate",
       "Group": "ETFs",
       "Subgroup": "Sector",
       "TechScore": 3,
@@ -955,7 +983,7 @@
     },
     {
       "Symbol": "XLV.US",
-      "Name": "SS Health Care",
+      "Name": "Health Care",
       "Group": "ETFs",
       "Subgroup": "Sector",
       "TechScore": 4,
@@ -983,7 +1011,7 @@
     },
     {
       "Symbol": "MXI.US",
-      "Name": "iShares Global Materials",
+      "Name": "Global Materials",
       "Group": "ETFs",
       "Subgroup": "Sector",
       "TechScore": 0,
@@ -1039,7 +1067,7 @@
     },
     {
       "Symbol": "XLP.US",
-      "Name": "SS Consumer Staples",
+      "Name": "Consumer Staples",
       "Group": "ETFs",
       "Subgroup": "Sector",
       "TechScore": 5,
@@ -1067,7 +1095,7 @@
     },
     {
       "Symbol": "AOA.US",
-      "Name": "iShares Core 80/20",
+      "Name": "Core 80/20",
       "Group": "ETFs",
       "Subgroup": "Allocation",
       "TechScore": 3,
@@ -1123,7 +1151,7 @@
     },
     {
       "Symbol": "VBK.US",
-      "Name": "VG Small-Cap Growth",
+      "Name": "US S-Cap Growth",
       "Group": "ETFs",
       "Subgroup": "Sector",
       "TechScore": -1,
@@ -1179,7 +1207,7 @@
     },
     {
       "Symbol": "DBC.US",
-      "Name": "Invesco DB Commodity",
+      "Name": "Commodity",
       "Group": "ETFs",
       "Subgroup": "Sector",
       "TechScore": 5,
@@ -1291,7 +1319,7 @@
     },
     {
       "Symbol": "CTA.US",
-      "Name": "Managed Futures Strategy",
+      "Name": "Managed Futures",
       "Group": "ETFs",
       "Subgroup": "Sector",
       "TechScore": 1,
@@ -1403,7 +1431,7 @@
     },
     {
       "Symbol": "AOR.US",
-      "Name": "iShares Core 60/40",
+      "Name": "Core 60/40",
       "Group": "ETFs",
       "Subgroup": "Allocation",
       "TechScore": 3,
@@ -1543,7 +1571,7 @@
     },
     {
       "Symbol": "VO.US",
-      "Name": "VG Mid-Cap",
+      "Name": "US M-Cap",
       "Group": "ETFs",
       "Subgroup": "Equity",
       "TechScore": 4,
@@ -1683,7 +1711,7 @@
     },
     {
       "Symbol": "VBR.US",
-      "Name": "VG Small-Cap Value",
+      "Name": "US S-Cap Value",
       "Group": "ETFs",
       "Subgroup": "Equity",
       "TechScore": 3,
@@ -1795,7 +1823,7 @@
     },
     {
       "Symbol": "XLY.US",
-      "Name": "SS Consumer Disc",
+      "Name": "Consumer Disc",
       "Group": "ETFs",
       "Subgroup": "Sector",
       "TechScore": 3,
@@ -1818,6 +1846,34 @@
       "MomentumRegime_1M": "Improving",
       "VolatilityRegime_1W": "Orderly",
       "VolatilityRegime_2W": "Orderly",
+      "VolatilityRegime_3W": "Orderly",
+      "VolatilityRegime_1M": "Orderly"
+    },
+    {
+      "Symbol": "SLV.US",
+      "Name": "Silver",
+      "Group": "ETFs",
+      "Subgroup": "Alternatives",
+      "TechScore": -4,
+      "TechScore_1W": -3,
+      "TechScore_2W": -5,
+      "TechScore_3W": -5,
+      "TechScore_1M": -8,
+      "TechScore_2M": -1,
+      "TechScore_3M": -4,
+      "TrendRegime": "Strong Downtrend",
+      "MomentumRegime": "Neutral",
+      "VolatilityRegime": "Compressed / Squeeze",
+      "TrendRegime_1W": "Strong Downtrend",
+      "TrendRegime_2W": "Strong Downtrend",
+      "TrendRegime_3W": "Strong Downtrend",
+      "TrendRegime_1M": "Strong Downtrend",
+      "MomentumRegime_1W": "Improving",
+      "MomentumRegime_2W": "Deteriorating",
+      "MomentumRegime_3W": "Neutral",
+      "MomentumRegime_1M": "Accelerating Bearish",
+      "VolatilityRegime_1W": "Compressed / Squeeze",
+      "VolatilityRegime_2W": "Compressed / Squeeze",
       "VolatilityRegime_3W": "Orderly",
       "VolatilityRegime_1M": "Orderly"
     },
@@ -1906,6 +1962,34 @@
       "VolatilityRegime_1M": "Expanding"
     },
     {
+      "Symbol": "IBIT.US",
+      "Name": "Bitcoin",
+      "Group": "ETFs",
+      "Subgroup": "Alternatives",
+      "TechScore": -4,
+      "TechScore_1W": -3,
+      "TechScore_2W": -3,
+      "TechScore_3W": -4,
+      "TechScore_1M": -8,
+      "TechScore_2M": -4,
+      "TechScore_3M": 5,
+      "TrendRegime": "Downtrend",
+      "MomentumRegime": "Deteriorating",
+      "VolatilityRegime": "Orderly",
+      "TrendRegime_1W": "Downtrend",
+      "TrendRegime_2W": "Downtrend",
+      "TrendRegime_3W": "Strong Downtrend",
+      "TrendRegime_1M": "Strong Downtrend",
+      "MomentumRegime_1W": "Neutral",
+      "MomentumRegime_2W": "Neutral",
+      "MomentumRegime_3W": "Improving",
+      "MomentumRegime_1M": "Accelerating Bearish",
+      "VolatilityRegime_1W": "Orderly",
+      "VolatilityRegime_2W": "Orderly",
+      "VolatilityRegime_3W": "Orderly",
+      "VolatilityRegime_1M": "Orderly"
+    },
+    {
       "Symbol": "LMT.US",
       "Name": "Lockheed Martin ",
       "Group": "Stocks",
@@ -1935,7 +2019,7 @@
     },
     {
       "Symbol": "HYG.US",
-      "Name": "iShares HY Corporate Bond",
+      "Name": "High Yield",
       "Group": "ETFs",
       "Subgroup": "Fixed Income",
       "TechScore": 2,
@@ -1963,7 +2047,7 @@
     },
     {
       "Symbol": "VEA.US",
-      "Name": "VG Developed Markets",
+      "Name": "DM stocks",
       "Group": "ETFs",
       "Subgroup": "Equity",
       "TechScore": 3,
@@ -1991,7 +2075,7 @@
     },
     {
       "Symbol": "VTEB.US",
-      "Name": "VG Tax-Exempt",
+      "Name": "Munis2",
       "Group": "ETFs",
       "Subgroup": "Fixed Income",
       "TechScore": -4,
@@ -2019,7 +2103,7 @@
     },
     {
       "Symbol": "TIP.US",
-      "Name": "iShares TIPS",
+      "Name": "TIPS",
       "Group": "ETFs",
       "Subgroup": "Fixed Income",
       "TechScore": -2,
@@ -2047,7 +2131,7 @@
     },
     {
       "Symbol": "VUG.US",
-      "Name": "VG Growth",
+      "Name": "US Growth",
       "Group": "ETFs",
       "Subgroup": "Equity",
       "TechScore": 1,
@@ -2355,7 +2439,7 @@
     },
     {
       "Symbol": "EFG.US",
-      "Name": "iShares International Growth",
+      "Name": "Intl Growth",
       "Group": "ETFs",
       "Subgroup": "Equity",
       "TechScore": 3,
@@ -2410,8 +2494,36 @@
       "VolatilityRegime_1M": "Orderly"
     },
     {
+      "Symbol": "GLDM.US",
+      "Name": "Gold",
+      "Group": "ETFs",
+      "Subgroup": "Alternatives",
+      "TechScore": -5,
+      "TechScore_1W": -3,
+      "TechScore_2W": -5,
+      "TechScore_3W": -5,
+      "TechScore_1M": -8,
+      "TechScore_2M": -2,
+      "TechScore_3M": -5,
+      "TrendRegime": "Strong Downtrend",
+      "MomentumRegime": "Neutral",
+      "VolatilityRegime": "Orderly",
+      "TrendRegime_1W": "Strong Downtrend",
+      "TrendRegime_2W": "Strong Downtrend",
+      "TrendRegime_3W": "Strong Downtrend",
+      "TrendRegime_1M": "Strong Downtrend",
+      "MomentumRegime_1W": "Improving",
+      "MomentumRegime_2W": "Neutral",
+      "MomentumRegime_3W": "Neutral",
+      "MomentumRegime_1M": "Accelerating Bearish",
+      "VolatilityRegime_1W": "Compressed / Squeeze",
+      "VolatilityRegime_2W": "Orderly",
+      "VolatilityRegime_3W": "Orderly",
+      "VolatilityRegime_1M": "Orderly"
+    },
+    {
       "Symbol": "MUB.US",
-      "Name": "iShares National Muni",
+      "Name": "Munis",
       "Group": "ETFs",
       "Subgroup": "Fixed Income",
       "TechScore": -4,
@@ -2439,7 +2551,7 @@
     },
     {
       "Symbol": "VB.US",
-      "Name": "VG Small-Cap",
+      "Name": "US S-Cap",
       "Group": "ETFs",
       "Subgroup": "Equity",
       "TechScore": 1,
@@ -2495,7 +2607,7 @@
     },
     {
       "Symbol": "BSV.US",
-      "Name": "VG Short-Term",
+      "Name": "ST bonds",
       "Group": "ETFs",
       "Subgroup": "Fixed Income",
       "TechScore": 4,
@@ -2551,7 +2663,7 @@
     },
     {
       "Symbol": "AGG.US",
-      "Name": "iShares Core US Aggregate",
+      "Name": "US Agg",
       "Group": "ETFs",
       "Subgroup": "Fixed Income",
       "TechScore": -3,
@@ -2635,7 +2747,7 @@
     },
     {
       "Symbol": "GDX.US",
-      "Name": "VanEck Gold Miners",
+      "Name": "Gold Miners",
       "Group": "ETFs",
       "Subgroup": "Sector",
       "TechScore": -5,
@@ -2691,7 +2803,7 @@
     },
     {
       "Symbol": "AOK.US",
-      "Name": "iShares Core 30/70",
+      "Name": "Core 30/70",
       "Group": "ETFs",
       "Subgroup": "Allocation",
       "TechScore": -1,
@@ -2747,7 +2859,7 @@
     },
     {
       "Symbol": "XLC.US",
-      "Name": "SS Comm Services",
+      "Name": "Comm Services",
       "Group": "ETFs",
       "Subgroup": "Sector",
       "TechScore": -4,
@@ -2775,7 +2887,7 @@
     },
     {
       "Symbol": "XLF.US",
-      "Name": "SS Financial Services",
+      "Name": "Financial Services",
       "Group": "ETFs",
       "Subgroup": "Sector",
       "TechScore": 5,
@@ -2803,7 +2915,7 @@
     },
     {
       "Symbol": "XLK.US",
-      "Name": "SS Technology",
+      "Name": "Technology",
       "Group": "ETFs",
       "Subgroup": "Sector",
       "TechScore": -2,
@@ -2859,7 +2971,7 @@
     },
     {
       "Symbol": "VGK.US",
-      "Name": "VG European Stock",
+      "Name": "European Stock",
       "Group": "ETFs",
       "Subgroup": "Equity",
       "TechScore": 6,
@@ -2887,7 +2999,7 @@
     },
     {
       "Symbol": "VWO.US",
-      "Name": "VG Emerging Markets",
+      "Name": "EM stocks",
       "Group": "ETFs",
       "Subgroup": "Equity",
       "TechScore": 1,
@@ -2999,7 +3111,7 @@
     },
     {
       "Symbol": "XLE.US",
-      "Name": "SS Energy",
+      "Name": "Energy",
       "Group": "ETFs",
       "Subgroup": "Sector",
       "TechScore": 9,
@@ -3055,7 +3167,7 @@
     },
     {
       "Symbol": "QAI.US",
-      "Name": "Hedge Multi-Strategy Tracker",
+      "Name": "Hedge Multi-Strat",
       "Group": "ETFs",
       "Subgroup": "Allocation",
       "TechScore": -1,
@@ -3083,7 +3195,7 @@
     },
     {
       "Symbol": "VOT.US",
-      "Name": "VG Mid-Cap Growth",
+      "Name": "US M-Cap Growth",
       "Group": "ETFs",
       "Subgroup": "Equity",
       "TechScore": -1,
