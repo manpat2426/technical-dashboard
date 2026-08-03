@@ -1,7 +1,8 @@
 """
 Orchestrates the full pipeline: for each symbol, pull + merge raw
-indicators (indicators.py), score every date (scoring.py), then write
-the latest values to Indicators and Scores_Current (airtable_client.py).
+indicators (indicators.py), score every date (scoring.py), classify every
+date into a decision state (decision.py), then write the latest values to
+Indicators and Scores_Current (airtable_client.py).
 
 Historical snapshots are NOT written to Airtable -- nothing in this
 pipeline ever reads dated history back (the 1W-3M checkpoints and the
@@ -38,6 +39,7 @@ from pathlib import Path
 import pandas as pd
 
 import airtable_client
+import decision
 import indicators
 import scoring
 from config import TEST_MODE, TEST_SYMBOLS
@@ -65,6 +67,9 @@ DASHBOARD_JSON_FIELDS = [
     "TrendRegime_1W", "TrendRegime_2W", "TrendRegime_3W", "TrendRegime_1M",
     "MomentumRegime_1W", "MomentumRegime_2W", "MomentumRegime_3W", "MomentumRegime_1M",
     "VolatilityRegime_1W", "VolatilityRegime_2W", "VolatilityRegime_3W", "VolatilityRegime_1M",
+    # Decision layer (decision.py). Carried in the JSON feed so the
+    # dashboard can display it -- index.html does not render these yet.
+    "Decision", "Decision_1W", "Decision_2W", "Decision_3W", "Decision_1M",
 ]
 
 
@@ -127,9 +132,14 @@ def build_checkpoint_fields(scored: pd.DataFrame, anchor_date: str) -> dict:
     """
     Historical checkpoint columns for Scores_Current: TechScore at
     1W/2W/3W/1M/2M/3M before `anchor_date`, plus TrendRegime/
-    MomentumRegime/VolatilityRegime at 1W/2W/3W/1M before it. 1M/2M/3M
-    use calendar-month subtraction (like Excel/Airtable's EDATE), so a
-    31st can resolve to a shorter month's last day.
+    MomentumRegime/VolatilityRegime/Decision at 1W/2W/3W/1M before it.
+    1M/2M/3M use calendar-month subtraction (like Excel/Airtable's
+    EDATE), so a 31st can resolve to a shorter month's last day.
+
+    Decision comes straight off the `scored` frame's point-in-time
+    Decision column (added by decision.add_decision_series), so
+    Decision_1W is genuinely what the tool would have said a week ago --
+    not today's decision back-dated.
 
     Sourced entirely from the in-memory `scored` DataFrame computed
     earlier in run() -- NOT an Airtable query. That DataFrame already
@@ -156,6 +166,7 @@ def build_checkpoint_fields(scored: pd.DataFrame, anchor_date: str) -> dict:
             fields[f"TrendRegime_{suffix}"] = row["TrendRegime"]
             fields[f"MomentumRegime_{suffix}"] = row["MomentumRegime"]
             fields[f"VolatilityRegime_{suffix}"] = row["VolatilityRegime"]
+            fields[f"Decision_{suffix}"] = row["Decision"]
 
     for suffix, months in _CHECKPOINT_MONTH_OFFSETS:
         row = _nearest_snapshot_on_or_before(scored, dates_dt, anchor - pd.DateOffset(months=months))
@@ -165,6 +176,7 @@ def build_checkpoint_fields(scored: pd.DataFrame, anchor_date: str) -> dict:
                 fields["TrendRegime_1M"] = row["TrendRegime"]
                 fields["MomentumRegime_1M"] = row["MomentumRegime"]
                 fields["VolatilityRegime_1M"] = row["VolatilityRegime"]
+                fields["Decision_1M"] = row["Decision"]
 
     return fields
 
@@ -205,6 +217,7 @@ def build_scores_current_row(scored: pd.DataFrame, latest: pd.Series, name: str,
         "VolatilityRegime": latest["VolatilityRegime"],
         "VolAdj": latest["VolAdj"],
         "TechScore": latest["TechScore"],
+        "Decision": latest["Decision"],
     }
     fields.update(build_checkpoint_fields(scored, latest["Date"]))
     return _to_native(fields)
@@ -212,10 +225,17 @@ def build_scores_current_row(scored: pd.DataFrame, latest: pd.Series, name: str,
 
 def build_history_log_rows(rows: pd.DataFrame) -> list:
     """One dict per row of `rows` (a scored DataFrame), in the shape
-    appended to history_log.jsonl: Symbol, Date, and every score/regime
-    column. Same fields the old Airtable Scores_History table held,
-    minus Group/SnapshotType/Notes -- this is a plain append-only log,
-    not a table needing per-run bookkeeping fields.
+    appended to history_log.jsonl: Symbol, Date, every score/regime
+    column, and the decision-layer state. Same fields the old Airtable
+    Scores_History table held, minus Group/SnapshotType/Notes (this is a
+    plain append-only log, not a table needing per-run bookkeeping
+    fields), plus Decision.
+
+    Decision is the point-in-time value for that row's own date (see
+    decision.add_decision_series) -- on a first-run backfill each logged
+    date carries the decision as it stood on that date, not today's.
+    Dates too early to have a full smoothing window come through as
+    null.
 
     Pass the full `scored` DataFrame for a first-run backfill (every
     scoreable date), or just its last row (e.g. `scored.tail(1)`) for a
@@ -231,6 +251,7 @@ def build_history_log_rows(rows: pd.DataFrame) -> list:
             "TrendRegime": record["TrendRegime"],
             "MomentumRegime": record["MomentumRegime"],
             "VolatilityRegime": record["VolatilityRegime"],
+            "Decision": record["Decision"],
         })
         for record in rows.to_dict("records")
     ]
@@ -317,6 +338,12 @@ def run(write: bool, only_symbols: list = None):
         try:
             history = indicators.build_symbol_history(symbol, config)
             scored = scoring.score_series(history, config)
+            # The decision layer sits on top of the finished scores: one
+            # forward pass over this symbol's full scored history, adding
+            # the point-in-time Decision for every date. Everything
+            # downstream (Scores_Current, its Decision checkpoints, the
+            # history log, the dashboard JSON) reads that column.
+            scored = decision.add_decision_series(scored)
         except Exception as exc:
             # One bad ticker (e.g. a format EODHD doesn't recognize)
             # shouldn't take down the whole run -- log it and move on.
@@ -336,7 +363,8 @@ def run(write: bool, only_symbols: list = None):
         history_log_rows.extend(build_history_log_rows(scored if first_history_run else scored.tail(1)))
 
         print(f"  {len(scored)} scoreable dates total "
-              f"(latest: {latest['Date']}, TechScore={latest['TechScore']}).")
+              f"(latest: {latest['Date']}, TechScore={latest['TechScore']}, "
+              f"sTech={latest['sTech']:.2f}, Decision={latest['Decision']}).")
 
     print("\n" + "=" * 60)
     print("WRITE SUMMARY")
