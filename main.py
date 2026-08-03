@@ -223,6 +223,54 @@ def build_scores_current_row(scored: pd.DataFrame, latest: pd.Series, name: str,
     return _to_native(fields)
 
 
+# The five Scores_Current fields whose values must come from
+# decision.DECISION_STATES and nothing else.
+_DECISION_FIELDS = ["Decision", "Decision_1W", "Decision_2W", "Decision_3W", "Decision_1M"]
+
+
+def validate_decision_fields(rows: list) -> None:
+    """
+    Fails the run if any Decision* value in `rows` isn't one of the six
+    states. Call this on the assembled Scores_Current rows before they're
+    written.
+
+    Scores_Current is upserted with typecast=True, so that a brand-new
+    Group/Subgroup added in Symbols auto-creates its single-select option
+    instead of failing the run (see airtable_client.upsert_scores_current).
+    That convenience cuts exactly the wrong way for these five fields: a
+    malformed decision string wouldn't be rejected, it would be silently
+    accepted and created as a SEVENTH option, quietly corrupting a
+    vocabulary that is supposed to be closed at six -- and it would keep
+    doing so every run afterwards, with the bad option looking just as
+    legitimate as the real ones in the Airtable UI.
+
+    So the strictness typecast removes gets restored here, for these
+    fields specifically, rather than by turning typecast off base-wide
+    (which would reintroduce the new-Group/Subgroup run failure it was
+    added to fix). Raising rather than asserting is deliberate: `assert`
+    compiles away under `python -O`, and this guard has to hold in every
+    environment.
+
+    None is allowed and expected: a checkpoint with no snapshot that far
+    back, or a date too early to have a full smoothing window behind it,
+    legitimately writes blank.
+    """
+    allowed = set(decision.DECISION_STATES)
+    offenders = [
+        (row.get("Symbol"), field, row[field])
+        for row in rows
+        for field in _DECISION_FIELDS
+        if row.get(field) is not None and row[field] not in allowed
+    ]
+    if offenders:
+        raise RuntimeError(
+            f"Refusing to write Scores_Current: {len(offenders)} Decision value(s) outside "
+            f"the closed six-state set {sorted(allowed)}. Because Scores_Current writes with "
+            f"typecast=True, writing these would silently create new single-select options "
+            f"rather than fail. Offending (Symbol, field, value): {offenders[:10]}"
+        )
+
+
 def build_history_log_rows(rows: pd.DataFrame) -> list:
     """One dict per row of `rows` (a scored DataFrame), in the shape
     appended to history_log.jsonl: Symbol, Date, every score/regime
@@ -365,6 +413,13 @@ def run(write: bool, only_symbols: list = None):
         print(f"  {len(scored)} scoreable dates total "
               f"(latest: {latest['Date']}, TechScore={latest['TechScore']}, "
               f"sTech={latest['sTech']:.2f}, Decision={latest['Decision']}).")
+
+    # Closed-set guard, run before ANY write (and on dry runs too, so a
+    # bad value surfaces without needing --write). A decision string
+    # outside the six-state vocabulary means a bug in decision.py, not a
+    # data problem -- fail the whole run loudly rather than let
+    # typecast=True quietly mint a seventh option in Airtable.
+    validate_decision_fields(scores_current_rows)
 
     print("\n" + "=" * 60)
     print("WRITE SUMMARY")
