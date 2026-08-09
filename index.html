@@ -262,8 +262,20 @@
     text-align: center;
     font-weight: 500;
   }
+  /* Decision cells are the same shape as regime cells, just wider: the
+     two longest state strings ("Steady-constructive", "Neutral / No
+     Signal") don't fit in 108px and would ellipsis, and unlike a regime
+     the decision is the headline conclusion -- worth reading without
+     hovering for the title tooltip. Same per-group width idiom as
+     grp-techscore / grp-regime, not a new layout mechanism. */
+  td.cell-decision {
+    width: 132px; min-width: 132px; max-width: 132px;
+    text-align: center;
+    font-weight: 500;
+  }
   th.grp-techscore { width: 44px; min-width: 44px; max-width: 44px; }
   th.grp-regime { width: 108px; min-width: 108px; max-width: 108px; }
+  th.grp-decision { width: 132px; min-width: 132px; max-width: 132px; }
 
   .step-7 { background: var(--step-7-bg); color: var(--step-7-fg); }
   .step-6 { background: var(--step-6-bg); color: var(--step-6-fg); }
@@ -280,6 +292,35 @@
     border-top: 1px solid var(--border);
     color: var(--text-muted);
     font-size: 11.5px;
+  }
+
+  /* Compact decision key. Chips reuse the same .step-N classes the table
+     cells use, so a legend colour can never drift from its column. */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 13px;
+    margin-bottom: 5px;
+  }
+  .legend-title {
+    color: var(--text-secondary);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.6px;
+  }
+  .legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+  }
+  .legend-chip {
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-weight: 600;
+    font-size: 10.5px;
   }
 
   @media (max-width: 640px) {
@@ -315,6 +356,9 @@
     td.col-name::after { display: block; }
     table { font-size: 11.5px; }
     td.cell-regime, th.grp-regime { width: 90px; min-width: 90px; max-width: 90px; }
+    td.cell-decision, th.grp-decision { width: 112px; min-width: 112px; max-width: 112px; }
+    .legend { gap: 3px 10px; }
+    .legend-item .legend-meaning { display: none; } /* chips only on narrow screens */
   }
 </style>
 </head>
@@ -337,14 +381,17 @@
   </table>
 </div>
 
-<footer id="footer"></footer>
+<footer>
+  <div class="legend" id="legend"></div>
+  <div id="footerNote"></div>
+</footer>
 
 <script>
 (function () {
   "use strict";
 
   // ---------- Column model ----------
-  // Each column: { key, label, kind: 'symbol'|'name'|'ts'|'regime', regimeType, group }
+  // Each column: { key, label, kind: 'symbol'|'name'|'ts'|'regime'|'decision', regimeType, group }
   const TS_KEYS = ["TechScore", "TechScore_1W", "TechScore_2W", "TechScore_3W", "TechScore_1M", "TechScore_2M", "TechScore_3M"];
   const TS_LABELS = { TechScore: "Now", TechScore_1W: "1W", TechScore_2W: "2W", TechScore_3W: "3W", TechScore_1M: "1M", TechScore_2M: "2M", TechScore_3M: "3M" };
 
@@ -360,22 +407,30 @@
     });
   }
 
+  // Decision sits immediately after the TechScore block -- the score,
+  // then what the tool concludes from it -- and its 1W/2W/3W/1M history
+  // goes at the far end alongside the other checkpoint groups, laid out
+  // exactly like the Trend/Momentum/Volatility history groups.
   const COLUMNS = [
     { key: "Symbol", label: "Symbol", kind: "symbol" },
     { key: "Name", label: "Name", kind: "name" },
   ]
   .concat(TS_KEYS.map(function (k) { return { key: k, label: TS_LABELS[k], kind: "ts", group: "techscore" }; }))
+  .concat([{ key: "Decision", label: "Now", kind: "decision", regimeType: "decision", group: "decision" }])
   .concat(CURRENT_REGIME_KEYS.map(function (c) { return { key: c.key, label: c.label, kind: "regime", regimeType: c.type, group: "current" }; }))
   .concat(checkpointCols("TrendRegime", "trend").map(function (c) { return Object.assign({}, c, { kind: "regime", regimeType: "trend", group: "trend" }); }))
   .concat(checkpointCols("MomentumRegime", "momentum").map(function (c) { return Object.assign({}, c, { kind: "regime", regimeType: "momentum", group: "momentum" }); }))
-  .concat(checkpointCols("VolatilityRegime", "volatility").map(function (c) { return Object.assign({}, c, { kind: "regime", regimeType: "volatility", group: "volatility" }); }));
+  .concat(checkpointCols("VolatilityRegime", "volatility").map(function (c) { return Object.assign({}, c, { kind: "regime", regimeType: "volatility", group: "volatility" }); }))
+  .concat(checkpointCols("Decision", "decision").map(function (c) { return Object.assign({}, c, { kind: "decision", regimeType: "decision", group: "decisionHistory" }); }));
 
   const GROUP_HEADERS = [
     { group: "techscore", label: "TechScore", span: TS_KEYS.length },
+    { group: "decision", label: "Decision", span: 1 },
     { group: "current", label: "Current Regime", span: CURRENT_REGIME_KEYS.length },
     { group: "trend", label: "Trend", span: 4 },
     { group: "momentum", label: "Momentum", span: 4 },
     { group: "volatility", label: "Volatility", span: 4 },
+    { group: "decisionHistory", label: "Decision", span: 4 },
   ];
 
   // Marks the first column of each of the 5 groups above (where `group`
@@ -399,7 +454,32 @@
     "Compressed / Squeeze": 6, "Orderly": 5, "Expanding": 4,
     "Elevated": 3, "Extreme / Unstable": 1,
   };
-  const STEP_TABLES = { trend: TREND_STEP, momentum: MOMENTUM_STEP, volatility: VOLATILITY_STEP };
+  // The six decision states on the same 7-step diverging scale, so a
+  // decision cell reads at a glance against the score and regime columns
+  // beside it. This is a categorical string->step lookup (like the regime
+  // tables above), not the numeric bucketing techScoreStep() does.
+  // Steady-constructive takes the deepest green over Improving because
+  // it's the stronger condition -- it only ever comes from the High band,
+  // whereas Improving can fire from the Middle or Low band -- and the two
+  // greens stay a step apart so "hold" and "add" are scannable apart.
+  const DECISION_STEP = {
+    "Steady-constructive": 7, "Improving": 6, "Neutral / No Signal": 4,
+    "Concerning": 3, "Steady-weak": 2, "Exit": 1,
+  };
+  const STEP_TABLES = {
+    trend: TREND_STEP, momentum: MOMENTUM_STEP,
+    volatility: VOLATILITY_STEP, decision: DECISION_STEP,
+  };
+
+  // Legend copy. Order is best -> worst, matching the step values above.
+  const DECISION_MEANINGS = [
+    ["Improving", "turning up; candidate to add"],
+    ["Steady-constructive", "strong and holding; core hold"],
+    ["Neutral / No Signal", "no clear edge; watch"],
+    ["Concerning", "rolling over; trim / tighten"],
+    ["Steady-weak", "weak and stable; stay out"],
+    ["Exit", "breaking down; get out"],
+  ];
 
   function techScoreStep(v) {
     if (v === null || v === undefined) return 0;
@@ -433,9 +513,10 @@
       ALL_ROWS = data.symbols || [];
       document.getElementById("updated").innerHTML =
         '<span class="dot"></span>Data as of ' + formatTimestamp(data.last_updated);
-      document.getElementById("footer").textContent =
+      document.getElementById("footerNote").textContent =
         ALL_ROWS.length + " securities • click a column header to sort • scroll horizontally for history";
       buildHeader();
+      buildLegend();
       buildFilters();
       render();
     })
@@ -476,6 +557,7 @@
       if (col.kind === "symbol") th.className = "col-symbol";
       else if (col.kind === "name") th.className = "col-name";
       else if (col.kind === "ts") th.className = "grp-techscore";
+      else if (col.kind === "decision") th.className = "grp-decision";
       else th.className = "grp-regime";
       if (col.groupStart) th.classList.add("group-start");
 
@@ -518,6 +600,41 @@
     }
     updateSortIndicators();
     render();
+  }
+
+  // ---------- Legend ----------
+  // Compact key for the six decision states. Chips are painted with the
+  // same .step-N class the table cells use and the same DECISION_STEP
+  // lookup, so the legend can't drift out of sync with the columns.
+  function buildLegend() {
+    const legend = document.getElementById("legend");
+    legend.innerHTML = "";
+
+    const title = document.createElement("span");
+    title.className = "legend-title";
+    title.textContent = "Decision";
+    legend.appendChild(title);
+
+    DECISION_MEANINGS.forEach(function (entry) {
+      const state = entry[0];
+      const meaning = entry[1];
+
+      const item = document.createElement("span");
+      item.className = "legend-item";
+      item.title = state + " — " + meaning;
+
+      const chip = document.createElement("span");
+      chip.className = "legend-chip step-" + regimeStep("decision", state);
+      chip.textContent = state;
+
+      const text = document.createElement("span");
+      text.className = "legend-meaning";
+      text.textContent = meaning;
+
+      item.appendChild(chip);
+      item.appendChild(text);
+      legend.appendChild(item);
+    });
   }
 
   // ---------- Filters ----------
@@ -604,7 +721,7 @@
     const col = COLUMNS.find(function (c) { return c.key === key; });
     if (!col) return row[key];
     if (col.kind === "ts") return row[key];
-    if (col.kind === "regime") return regimeStep(col.regimeType, row[key]);
+    if (col.kind === "regime" || col.kind === "decision") return regimeStep(col.regimeType, row[key]);
     return row[key];
   }
 
@@ -645,9 +762,13 @@
           td.className = "cell-ts step-" + techScoreStep(v);
           td.textContent = (v === null || v === undefined) ? "" : v;
         } else {
+          // Regime and decision cells share this path. `v || ""` is what
+          // keeps a missing checkpoint (absent key, null, or "") an empty
+          // cell rather than "undefined" -- legitimate for a symbol too
+          // early in its history to have that lookback.
           const v = row[col.key];
           const step = regimeStep(col.regimeType, v);
-          td.className = "cell-regime step-" + step;
+          td.className = (col.kind === "decision" ? "cell-decision" : "cell-regime") + " step-" + step;
           td.textContent = v || "";
           if (v) td.title = v;
         }
