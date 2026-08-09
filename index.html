@@ -407,30 +407,34 @@
     });
   }
 
-  // Decision sits immediately after the TechScore block -- the score,
-  // then what the tool concludes from it -- and its 1W/2W/3W/1M history
-  // goes at the far end alongside the other checkpoint groups, laid out
-  // exactly like the Trend/Momentum/Volatility history groups.
+  // Decision leads the table -- it's the headline conclusion, so it sits
+  // first, right after the sticky Symbol/Name pair, with its own 1W/2W/
+  // 3W/1M history immediately behind it. Same current-then-history shape
+  // as the TechScore group that follows, so the two read the same way.
+  const DECISION_COLS = [
+    { key: "Decision", label: "Now", kind: "decision", regimeType: "decision", group: "decision" },
+  ].concat(checkpointCols("Decision", "decision").map(function (c) {
+    return Object.assign({}, c, { kind: "decision", regimeType: "decision", group: "decision" });
+  }));
+
   const COLUMNS = [
     { key: "Symbol", label: "Symbol", kind: "symbol" },
     { key: "Name", label: "Name", kind: "name" },
   ]
+  .concat(DECISION_COLS)
   .concat(TS_KEYS.map(function (k) { return { key: k, label: TS_LABELS[k], kind: "ts", group: "techscore" }; }))
-  .concat([{ key: "Decision", label: "Now", kind: "decision", regimeType: "decision", group: "decision" }])
   .concat(CURRENT_REGIME_KEYS.map(function (c) { return { key: c.key, label: c.label, kind: "regime", regimeType: c.type, group: "current" }; }))
   .concat(checkpointCols("TrendRegime", "trend").map(function (c) { return Object.assign({}, c, { kind: "regime", regimeType: "trend", group: "trend" }); }))
   .concat(checkpointCols("MomentumRegime", "momentum").map(function (c) { return Object.assign({}, c, { kind: "regime", regimeType: "momentum", group: "momentum" }); }))
-  .concat(checkpointCols("VolatilityRegime", "volatility").map(function (c) { return Object.assign({}, c, { kind: "regime", regimeType: "volatility", group: "volatility" }); }))
-  .concat(checkpointCols("Decision", "decision").map(function (c) { return Object.assign({}, c, { kind: "decision", regimeType: "decision", group: "decisionHistory" }); }));
+  .concat(checkpointCols("VolatilityRegime", "volatility").map(function (c) { return Object.assign({}, c, { kind: "regime", regimeType: "volatility", group: "volatility" }); }));
 
   const GROUP_HEADERS = [
+    { group: "decision", label: "Decision", span: DECISION_COLS.length },
     { group: "techscore", label: "TechScore", span: TS_KEYS.length },
-    { group: "decision", label: "Decision", span: 1 },
     { group: "current", label: "Current Regime", span: CURRENT_REGIME_KEYS.length },
     { group: "trend", label: "Trend", span: 4 },
     { group: "momentum", label: "Momentum", span: 4 },
     { group: "volatility", label: "Volatility", span: 4 },
-    { group: "decisionHistory", label: "Decision", span: 4 },
   ];
 
   // Marks the first column of each of the 5 groups above (where `group`
