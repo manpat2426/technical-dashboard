@@ -25,7 +25,7 @@ The model is built in three conceptual layers, and keeping them distinct is cent
 
 This ordering matters: the indicators state the facts, the regimes explain the current condition in human terms, and the scores rank the security relative to others. Together they give both an *interpretation* system and a *ranking* system — you can ask both "what state is this in?" and "how does it stack up?"
 
-A final principle: **the model is meant to be transparent and editable.** Every calculation is traceable, and every threshold and parameter lives in one central `Config` table so the methodology can be tuned over time without rewriting the underlying logic.
+A final principle: **the model is meant to be transparent and editable.** Every calculation is traceable, and every parameter lives in exactly one declared place — most of them in the central `Config` table, which can be edited without touching code at all, and the remainder in clearly labeled constants blocks in the scripts (see the note at the top of this document for which is which). The point is not that everything is in Config; it is that nothing is buried. There are no hidden thresholds scattered through the logic.
 
 ---
 

@@ -9,3 +9,7 @@ venv/
 
 # Editor/OS cruft
 .DS_Store
+
+# Local tooling config (e.g. Claude Code's dev-server launch config).
+# Machine-specific and not needed to run or deploy the pipeline.
+.claude/
