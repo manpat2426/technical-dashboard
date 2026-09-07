@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-09-05T00:00:48.438387+00:00",
+  "last_updated": "2026-09-07T23:59:19.368366+00:00",
   "symbols": [
     {
       "Symbol": "ACGL.US",
@@ -5220,7 +5220,7 @@
       "Name": "Outfront",
       "Group": "Stocks",
       "Subgroup": "Real Estate",
-      "TechScore": -3,
+      "TechScore": -6,
       "TechScore_1W": -3,
       "TechScore_2W": -6,
       "TechScore_3W": -6,
@@ -5228,7 +5228,7 @@
       "TechScore_2M": 10,
       "TechScore_3M": 5,
       "TrendRegime": "Downtrend",
-      "MomentumRegime": "Neutral",
+      "MomentumRegime": "Accelerating Bearish",
       "VolatilityRegime": "Orderly",
       "TrendRegime_1W": "Downtrend",
       "TrendRegime_2W": "Downtrend",
