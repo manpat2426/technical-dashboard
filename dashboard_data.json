@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-11-26T01:05:25.293354+00:00",
+  "last_updated": "2026-11-27T01:02:04.330450+00:00",
   "symbols": [
     {
       "Symbol": "ACGL.US",
@@ -4233,10 +4233,10 @@
       "TechScore": -9,
       "TechScore_1W": -9,
       "TechScore_2W": -8,
-      "TechScore_3W": -4,
+      "TechScore_3W": -2,
       "TechScore_1M": -2,
       "TechScore_2M": -1,
-      "TechScore_3M": -4,
+      "TechScore_3M": -3,
       "TrendRegime": "Strong Downtrend",
       "MomentumRegime": "Accelerating Bearish",
       "VolatilityRegime": "Expanding",
@@ -4252,7 +4252,7 @@
       "VolatilityRegime_2W": "Orderly",
       "VolatilityRegime_3W": "Orderly",
       "VolatilityRegime_1M": "Orderly",
-      "Decision": "Steady-weak",
+      "Decision": "Exit",
       "Decision_1W": "Steady-weak",
       "Decision_2W": "Steady-weak",
       "Decision_3W": "Steady-weak",
